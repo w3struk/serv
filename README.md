@@ -111,7 +111,7 @@ https://example.com:8443 {
     bind 0.0.0.0
     encode gzip zstd
 
-    # HTTP запросы → HTTPS
+    # HTTP запросы > HTTPS
     @http protocol http
     redir @http https://example.com:8443{uri} permanent
 
