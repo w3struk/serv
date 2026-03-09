@@ -85,7 +85,7 @@ nano /opt/3x-ui-setup/caddy/Caddyfile
             tls
         }
     }
-    # HTTP запросы > HTTPS для 8443 порта
+    # HTTP > HTTPS для 8443 порта
     servers :8443 {
         protocols h1 h2
         listener_wrappers {
