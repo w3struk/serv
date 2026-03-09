@@ -143,7 +143,7 @@ https://example.com:8443 {
 }
 ```
 
-- Замените example.com на ваш реальный домен в `Caddyfile`
+- Замените example.com на ваш реальный домен в `Caddyfile` через [sed](https://www.opennet.ru/docs/RUS/bash_scripting_guide/a14586.html) 
 ```bash
 sed -i 's/example.com/ваш.домен.com/g' /opt/3x-ui-setup/caddy/Caddyfile
 ```
