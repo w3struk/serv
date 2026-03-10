@@ -284,8 +284,7 @@ nano /opt/3x-ui-setup/caddy/caddy.json
 }
 ```
 
-- Замените example.com на ваш реальный домен в `Caddyfile`\
-  Можно это сделать через sed, где он заменит `example.com` из конфига на `ваш.домен.com`:
+- Замените example.com на ваш реальный домен в `caddy.json` через sed, где он заменит `example.com` из конфига на `ваш.домен.com`:
 ```bash
 sed -i 's/example.com/ваш.домен.com/g' /opt/3x-ui-setup/caddy/caddy.json
 ```
