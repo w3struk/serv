@@ -257,4 +257,4 @@ docker compose -f /opt/3x-ui-setup/docker-compose.yml down && docker compose -f 
 - Теперь должен заработать маскировочный сайт `http://ваш.домен.com`
 
 #### Thanks:
- [Akiyamov](https://github.com/Akiyamov) - Caddy + Reality (Self Steal) в Docker
+ [Akiyamov](https://github.com/Akiyamov) - xray-vps-setup
