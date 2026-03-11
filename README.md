@@ -195,14 +195,14 @@ docker compose -f /opt/3x-ui-setup/docker-compose.yml up -d
 #### Настройка пути до панели
 
 - Перейдите `Panel Settings -> General -> URI Path`
-- Измените / на что то свое, например: /admin-secret-path/
+- Измените `/` на что то свое, например: `/admin-secret-path/`
 - Сохраните настройки.
-- Теперь панель будет доступна по адресу: https://example.com:8443/admin-secret-path
+- Теперь панель будет доступна по адресу: `https://example.com:8443/admin-secret-path`
 
 #### Настройка пути до подписки
 
 - Перейдите в `Panel Settings → Subscription -> URI Path (sub)`
-- Измените /sub/ на что то свое, например: /sub-secret-path/
+- Измените `/sub/` на что то свое, например: `/sub-secret-path/`
 - `Panel Settings → Subscription -> Reverse Proxy URI`
 - Измените Reverse Proxy URI на https://example.com:8443/sub-secret-path/
 - Сохраните настройки и перезапустите панель.
@@ -229,7 +229,7 @@ docker compose -f /opt/3x-ui-setup/docker-compose.yml down && docker compose -f 
 ```
 
 > [!CAUTION]
-> Необходимо использовать собственное уникальное значение для admin-secret-path и sub-secret-path.
+> Необходимо использовать собственное уникальное значение для `admin-secret-path` и `sub-secret-path`.
 
 ### Создание подключения Reality (Self Steal)
 
