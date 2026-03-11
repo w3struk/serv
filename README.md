@@ -204,7 +204,7 @@ docker compose -f /opt/3x-ui-setup/docker-compose.yml up -d
 - Перейдите в `Panel Settings → Subscription -> URI Path (sub)`
 - Измените `/sub/` на что то свое, например: `/sub-secret-path/`
 - `Panel Settings → Subscription -> Reverse Proxy URI`
-- Измените Reverse Proxy URI на https://example.com:8443/sub-secret-path/
+- Измените Reverse Proxy URI на `https://example.com:8443/sub-secret-path/`
 - Сохраните настройки и перезапустите панель.
 
 > [!CAUTION]
