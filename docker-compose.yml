@@ -4,12 +4,10 @@ services:
     container_name: caddy
     restart: always
     network_mode: host
-    command: caddy run --config /etc/caddy/caddy.json
     volumes:
       - ./caddy/data:/data
       - ./caddy/templates:/srv
-      - ./caddy/caddy.json:/etc/caddy/caddy.json
-#      - ./caddy/Caddyfile:/etc/caddy/Caddyfile
+      - ./caddy/Caddyfile:/etc/caddy/Caddyfile
 
   3xui:
     image: ghcr.io/mhsanaei/3x-ui:latest
