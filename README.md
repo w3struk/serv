@@ -183,7 +183,7 @@ docker compose -f /opt/3x-ui-setup/docker-compose.yml up -d
 
 ### Первый вход в панель
 
-- Откройте в браузере: https://example.com:8443
+- Откройте в браузере: https://ваш.домен.com:8443
 - Логин: admin
 - Пароль: admin
 
@@ -204,7 +204,7 @@ docker compose -f /opt/3x-ui-setup/docker-compose.yml up -d
 - Перейдите в `Panel Settings → Subscription -> URI Path (sub)`
 - Измените `/sub/` на что то свое, например: `/sub-secret-path/`
 - `Panel Settings → Subscription -> Reverse Proxy URI`
-- Измените Reverse Proxy URI на `https://example.com:8443/sub-secret-path/`
+- Измените Reverse Proxy URI на `https://ваш.домен.com:8443/sub-secret-path/`
 - Сохраните настройки и перезапустите панель.
 
 > [!CAUTION]
@@ -244,15 +244,13 @@ docker compose -f /opt/3x-ui-setup/docker-compose.yml down && docker compose -f 
 - Xver: 1
 - uTLS: chrome
 - Target: 127.0.0.1:4123
-- SNI: example.com
+- SNI: ваш.домен.com
 - PrivateKey Public Key: сгенерировать нажав Get New Cert
 - ShortID: сгенерировать
 - Sniffing - enable: HTTP TLS QUIC FAKEDNS отмечены
 
-> [!CAUTION]
-> Замените **example.com** на ваш домен.>
 
-- Inbound должен выглядеть приблизительно [так](panel.png)
++ Inbound должен выглядеть приблизительно [так](panel.png)
 
 - Теперь должен заработать маскировочный сайт `http://ваш.домен.com`
 
