@@ -252,7 +252,7 @@ docker compose -f /opt/3x-ui-setup/docker-compose.yml down && docker compose -f 
 
 + Inbound должен выглядеть приблизительно [так](panel.png)
 
-- Теперь должен заработать маскировочный сайт `http://ваш.домен.com`
+- Теперь должен заработать маскировочный сайт `https://my.domain.com`
 
 #### Thanks:
  [Akiyamov](https://github.com/Akiyamov) - xray-vps-setup \
