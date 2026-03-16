@@ -256,3 +256,4 @@ docker compose -f /opt/3x-ui-setup/docker-compose.yml down && docker compose -f 
 
 #### Thanks:
  [Akiyamov](https://github.com/Akiyamov) - xray-vps-setup
+ [ampetelin](https://github.com/ampetelin/3x-ui-aio) - 3x-ui-aio
