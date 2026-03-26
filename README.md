@@ -21,15 +21,12 @@ bash <(wget -qO- https://get.docker.com) @ -o get-docker.sh
 ```
 
 - Запуск Docker без root
-
 ```bash
 sudo groupadd docker
 ```
-
 ```bash
 sudo usermod -aG docker $USER
 ```
-
 ```bash
 newgrp docker
 ```
@@ -42,17 +39,14 @@ docker run hello-world
 ### Создание необходимых директорий и файлов
 
 - Создайте директории:
-
 ```bash
 mkdir -p /opt/3x-ui-setup/{3x-ui,caddy/templates}
 ```
 
 - Создайте файл `docker-compose.yml`:
-
 ```bash
 nano /opt/3x-ui-setup/docker-compose.yml
 ```
-
 ```bash
 services:
   caddy:
@@ -156,13 +150,11 @@ https://example.com:8443 {
 ```
 
 - Замените example.com на ваш реальный домен в `Caddyfile` через sed, где он заменит `example.com` из конфига на `my.domain.com`:
-
 ```bash
 sed -i 's/example.com/my.domain.com/g' /opt/3x-ui-setup/caddy/Caddyfile
 ```
 
 - Или можете заменить домен вручную, редактируя `Caddyfile` в редакторе
-
 ```bash
 nano /opt/3x-ui-setup/caddy/Caddyfile
 ```
@@ -170,7 +162,6 @@ nano /opt/3x-ui-setup/caddy/Caddyfile
 #### Добавьте страницу для маскировки
 
 - Для маскировки сервера используется [Confluence](https://github.com/Jolymmiles/confluence-marzban-home)
-
 ```bash
 wget -qO- https://raw.githubusercontent.com/Jolymmiles/confluence-marzban-home/main/index.html  | envsubst > /opt/3x-ui-setup/caddy/templates/index.html
 ```
@@ -202,22 +193,20 @@ docker compose -f /opt/3x-ui-setup/docker-compose.yml up -d
 #### Настройка пути до подписки
 
 - Перейдите в `Panel Settings → Subscription -> URI Path (sub)`
-- Измените `/sub/` на что то свое, например: `/super-secret-path/`
+- Измените `/sub/` на что то свое, например: `/sub-secret-path/`
 - `Panel Settings → Subscription -> Reverse Proxy URI`
-- Измените Reverse Proxy URI на `https://my.domain.com:8443/super-secret-path/`
+- Измените Reverse Proxy URI на `https://my.domain.com:8443/sub-secret-path/`
 - Сохраните настройки и перезапустите панель.
 
 > [!CAUTION]
 > Если `URI Path (sub)` начинается с sub, например /sub-secret-path/ то дополнительные изменения в `Caddyfile` не нужны, в любом другом случае необходимо изменить `Caddyfile`, иначе подписки открываться не будут:
 
-- Измените путь `/sub/` на `/super-secret-path/`  в `Caddyfile`:
-
+- Измените путь `/sub*` на `/super-secret-path/*`  в `Caddyfile`:
 ```bash
-sed -i 's|/sub/|/super-secret-path/|g' /opt/3x-ui-setup/caddy/Caddyfile
+sed -i 's|/sub|/super-secret-path/|g' /opt/3x-ui-setup/caddy/Caddyfile
 ```
 
 - Или можете заменить путь вручную, редактируя `Caddyfile` в редакторе
-
 ```bash
 nano /opt/3x-ui-setup/caddy/Caddyfile
 ```
