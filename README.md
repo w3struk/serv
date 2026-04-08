@@ -76,9 +76,9 @@ services:
     volumes:
       - ./3x-ui/db/:/etc/x-ui/
     environment:
-#      TZ: Europe/Moscow
       XRAY_VMESS_AEAD_FORCED: "false"
       XUI_ENABLE_FAIL2BAN: "true"
+#      TZ: Europe/Moscow
     tty: true
 ```
 
