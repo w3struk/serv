@@ -212,12 +212,12 @@ docker compose -f /opt/3x-ui-setup/docker-compose.yml up -d
 - Сохраните настройки и перезапустите панель.
 
 > [!CAUTION]
-> Если `URI Path (sub)` начинается с sub, например /sub-secret-path/ то дополнительные изменения в `Caddyfile` не нужны, в любом другом случае необходимо изменить `Caddyfile`, иначе подписки открываться не будут:
+> Если `URI Path (sub)` начинается с sub, например /sub-json-secret-path/ то дополнительные изменения в `Caddyfile` не нужны, в любом другом случае необходимо изменить `Caddyfile`, иначе подписки открываться не будут:
 
-- Измените путь `/sub*` на `/super-secret-path/*`  в `Caddyfile`:
+- Измените путь `/sub*` на `/super-secret-path*`  в `Caddyfile`:
 
 ```bash
-sed -i 's|/sub|/super-secret-path/|g' /opt/3x-ui-setup/caddy/Caddyfile
+sed -i 's|/sub|/super-secret-path|g' /opt/3x-ui-setup/caddy/Caddyfile
 ```
 
 - Или можете заменить путь вручную, редактируя `Caddyfile` в редакторе
