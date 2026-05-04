@@ -1,0 +1,77 @@
+{
+  "dns": {
+    "servers": [
+      {
+        "tag": "ali",
+        "type": "https",
+        "server": "223.6.6.6"
+      }
+    ],
+    "independent_cache": true,
+    "strategy": "ipv4_only"
+  },
+  "inbounds": [
+    {
+      "type": "tproxy",
+      "tag": "tproxy_in",
+      "listen": "::",
+      "listen_port": 12345
+    }
+  ],
+  "route": {
+    "default_domain_resolver": "ali",
+    "rules": [
+      {
+        "action": "sniff"
+      },
+      {
+        "type": "logical",
+        "mode": "or",
+        "rules": [
+          {
+            "port": 53
+          },
+          {
+            "protocol": "dns"
+          }
+        ],
+        "action": "hijack-dns"
+      },
+      {
+        "ip_is_private": true,
+        "outbound": "direct"
+      },
+      {
+        "domain": [
+          "geosite:category-ru"
+        ],
+        "outbound": "direct"
+      },
+      {
+        "outbound": "proxy"
+      }
+    ]
+  },
+  "outbounds": [
+    {
+      "type": "vless",
+      "tag": "proxy",
+      "server": "127.0.0.1",
+      "server_port": 9000,
+      "uuid": "YOUR_UUID_FROM_3XUI",
+      "packet_encoding": "xudp"
+    },
+    {
+      "type": "direct",
+      "tag": "direct"
+    },
+    {
+      "type": "block",
+      "tag": "block"
+    },
+    {
+      "type": "dns",
+      "tag": "dns-out"
+    }
+  ]
+}

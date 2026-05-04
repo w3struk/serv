@@ -1,0 +1,63 @@
+{
+    auto_https disable_redirects
+}
+
+https://example.com {
+    bind 0.0.0.0
+    encode gzip zstd
+
+    tls {
+        protocols tls1.3
+    }
+
+    handle /admin-secret-path* {
+        basic_auth {
+            admin $2a$14$HASHEDPASSWORD
+        }
+        reverse_proxy 127.0.0.1:2053 {
+            header_up X-Real-IP {remote_host}
+        }
+    }
+
+    handle /sub* {
+        reverse_proxy 127.0.0.1:2096 {
+            header_up X-Real-IP {remote_host}
+        }
+    }
+
+    handle /api/v* {
+        reverse_proxy 127.0.0.1:2023 {
+            flush_interval -1
+            transport http {
+                versions h2c 2
+            }
+            header_up X-Real-IP {remote_host}
+        }
+    }
+
+    handle {
+        reverse_proxy 127.0.0.1:9118 {
+            header_up X-Forwarded-Proto https
+            header_up X-Forwarded-Host {host}
+            header_up X-Real-IP {remote_host}
+        }
+    }
+
+    header {
+        Strict-Transport-Security "max-age=31536000; includeSubDomains; preload"
+        X-Content-Type-Options nosniff
+        X-Frame-Options SAMEORIGIN
+        -Server
+        -X-Powered-By
+    }
+}
+
+http://example.com {
+    bind 0.0.0.0
+    redir https://example.com{uri} permanent
+}
+
+:80 {
+    bind 0.0.0.0
+    respond 204
+}

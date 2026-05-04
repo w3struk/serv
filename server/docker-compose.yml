@@ -1,0 +1,41 @@
+services:
+  caddy:
+    image: caddy:latest
+    container_name: caddy
+    restart: always
+    network_mode: host
+    volumes:
+      - ./caddy/data:/data
+      - ./Caddyfile:/etc/caddy/Caddyfile
+
+  lampac:
+    image: ghcr.io/lampac-nextgen/lampac
+    container_name: lampac
+    restart: unless-stopped
+    shm_size: 1024mb
+    ports:
+      - "127.0.0.1:9118:9118"
+    volumes:
+      - ./lampac/passwd:/lampac/passwd
+      - ./lampac/init.conf:/lampac/init.conf
+
+  3xui:
+    image: ghcr.io/mhsanaei/3x-ui:latest
+    container_name: 3xui_app
+    restart: unless-stopped
+    network_mode: host
+    volumes:
+      - ./3x-ui/db/:/etc/x-ui/
+    environment:
+      XRAY_VMESS_AEAD_FORCED: "false"
+      XUI_ENABLE_FAIL2BAN: "true"
+    tty: true
+
+  vk-turn:
+    image: ghcr.io/cacggghp/vk-turn-proxy:latest
+    container_name: vk-turn-proxy
+    restart: unless-stopped
+    network_mode: host
+    environment:
+      - CONNECT_ADDR=127.0.0.1:2024
+      - VLESS_MODE=true
