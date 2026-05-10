@@ -7,20 +7,94 @@
 <details>
 <summary>Настройка SSH</summary>
 
-См. [docs/ssh-setup.md](../docs/ssh-setup.md)
 
+Выполняется на локальном компьютере (GNU/Linux или Windows). На Windows используйте PowerShell.
+
+### Генерация ключа
+
+```bash
+ssh-keygen -t ed25519
+```
+
+При выполнении вам предложат изменить место хранения ключа и добавить пароль. Менять локацию не надо, пароль добавьте для безопасности.
+
+### Копирование публичного ключа на VPS
+
+**Linux:**
+```bash
+ssh-copy-id -i ~/.ssh/id_ed25519.pub ваш_пользователь@ваша_vps
+```
+
+**Windows (PowerShell):**
+```powershell
+ssh-copy-id -i $env:USERPROFILE\.ssh\id_ed25519.pub ваш_пользователь@ваша_vps
+```
+
+Если `ssh-copy-id` не работает на Windows:
+```powershell
+type $env:USERPROFILE\.ssh\id_ed25519.pub | ssh ваш_пользователь@ваша_vps "cat >> .ssh/authorized_keys"
+```
+
+### Отключение входа по паролю
+
+Создайте файл конфигурации:
+```bash
+sudo nano /etc/ssh/sshd_config.d/00-disable-password.conf
+```
+
+Добавьте:
+```
+Port 22
+PasswordAuthentication no
+```
+
+Перезапустите SSH:
+```bash
+sudo systemctl restart ssh
+```
 </details>
 
 <details>
 <summary>Включение BBR</summary>
 
-См. [docs/bbr-setup.md](../docs/bbr-setup.md)
+BBR — алгоритм управления перегрузкой TCP от Google, улучшающий производительность сети.
 
+```bash
+echo "net.core.default_qdisc=fq" | sudo tee -a /etc/sysctl.conf
+echo "net.ipv4.tcp_congestion_control=bbr" | sudo tee -a /etc/sysctl.conf
+sudo sysctl -p
+```
+
+Проверка:
+```bash
+sysctl net.ipv4.tcp_congestion_control
+# Должно вывести: net.ipv4.tcp_congestion_control = bbr
+```
 </details>
+<details>
+<summary>Установка Docker</summary>
 
-### Установка Docker
+Инструкции: https://docs.docker.com/engine/install/
 
-См. [docs/docker-install.md](../docs/docker-install.md)
+**Быстрая установка:**
+```bash
+bash <(wget -qO- https://get.docker.com) @ -o get-docker.sh
+```
+
+### Запуск Docker без root
+
+```bash
+sudo groupadd docker
+sudo usermod -aG docker $USER
+newgrp docker
+```
+
+### Проверка
+
+```bash
+docker run hello-world
+```
+</details>
 
 ### Развёртывание
 
@@ -122,15 +196,6 @@ docker compose down && docker compose up -d
 - **Force TLS:** включить
 - **Remark:** `Через Caddy`
 
-#### Standalone VK TURN (VLESS Mode)
-
-- **Protocol:** VLESS
-- **Listen IP:** `127.0.0.1`
-- **Port:** `2024` (должен совпадать с `CONNECT_ADDR` в `docker-compose.yml`)
-- **Transmission:** TCP
-- **Security:** none
-- **Sniffing:** enable
-
 ### Настройка firewall
 
 ```bash
@@ -145,7 +210,6 @@ sudo iptables -A INPUT -p tcp --dport 80 -j ACCEPT
 sudo iptables -A INPUT -p udp --dport 80 -j ACCEPT
 sudo iptables -A INPUT -p tcp --dport 443 -j ACCEPT
 sudo iptables -A INPUT -p udp --dport 443 -j ACCEPT
-sudo iptables -A INPUT -p udp --dport 56000 -j ACCEPT
 sudo iptables -A INPUT -i lo -j ACCEPT
 sudo iptables -A OUTPUT -o lo -j ACCEPT
 sudo iptables -P INPUT DROP

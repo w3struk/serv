@@ -71,8 +71,3 @@ su -c "/data/adb/tproxy.sh -d /data/adb/ start"
 
 ```bash
 ./sing-box run -c singbox.json
-```
-
-### VK TURN
-
-См. [vk-turn/README.md](vk-turn/README.md)

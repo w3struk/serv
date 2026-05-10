@@ -30,12 +30,3 @@ services:
       XRAY_VMESS_AEAD_FORCED: "false"
       XUI_ENABLE_FAIL2BAN: "true"
     tty: true
-
-  vk-turn:
-    image: ghcr.io/cacggghp/vk-turn-proxy:latest
-    container_name: vk-turn-proxy
-    restart: unless-stopped
-    network_mode: host
-    environment:
-      - CONNECT_ADDR=127.0.0.1:2024
-      - VLESS_MODE=true
