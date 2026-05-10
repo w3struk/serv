@@ -24,7 +24,7 @@
 **Сервер (`server/`):**
 - **Caddy** — reverse proxy, выпуск/обновление TLS-сертификатов
 - **3x-ui** — панель управления Xray (VLESS inbounds)
-- **Lampac NextGen** — маскировочный сайт
+- **Lampac** — маскировочный сайт
 
 **Клиент (`client/`):**
 - **tproxy.sh** — прозрачный прокси (TPROXY) для Android

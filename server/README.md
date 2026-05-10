@@ -199,11 +199,6 @@ docker compose down && docker compose up -d
 ### Настройка firewall
 
 ```bash
-sudo bash ./scripts/firewall.sh
-```
-
-Или вручную:
-```bash
 sudo iptables -A INPUT -m state --state RELATED,ESTABLISHED -j ACCEPT
 sudo iptables -A INPUT -p tcp --dport 22 -j ACCEPT
 sudo iptables -A INPUT -p tcp --dport 80 -j ACCEPT

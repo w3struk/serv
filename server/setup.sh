@@ -2,7 +2,7 @@
 set -e
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd -P)"
-SERVER_DIR="$(dirname "$SCRIPT_DIR")"
+SERVER_DIR="$SCRIPT_DIR"
 
 usage() {
     echo "Usage: $0 <domain>"
@@ -63,7 +63,24 @@ echo "    Replace '\$2a\$14\$HASHEDPASSWORD' with:"
 echo "    $BCRYPT_HASH"
 
 echo ""
-echo "[5/5] Next steps:"
+echo "[5/6] Setting up firewall..."
+echo "  Setting up firewall rules..."
+iptables -A INPUT -m state --state RELATED,ESTABLISHED -j ACCEPT
+iptables -A INPUT -p tcp --dport 22 -j ACCEPT
+iptables -A INPUT -p tcp --dport 80 -j ACCEPT
+iptables -A INPUT -p udp --dport 80 -j ACCEPT
+iptables -A INPUT -p tcp --dport 443 -j ACCEPT
+iptables -A INPUT -p udp --dport 443 -j ACCEPT
+iptables -A INPUT -i lo -j ACCEPT
+iptables -A OUTPUT -o lo -j ACCEPT
+iptables -P INPUT DROP
+mkdir -p /etc/network
+iptables-save > /etc/network/iptables.rules
+echo "  Firewall configured"
+echo "  Rules saved to /etc/network/iptables.rules"
+
+echo ""
+echo "[6/6] Next steps:"
 echo ""
 echo "1. Edit Caddyfile and replace the bcrypt hash:"
 echo "   nano $SERVER_DIR/Caddyfile"
@@ -75,9 +92,6 @@ echo "3. Set panel base path:"
 echo "   docker exec -it 3xui_app /app/x-ui setting -webBasePath /admin-secret-path/"
 echo "   docker restart 3xui_app"
 echo ""
-echo "4. Set up firewall:"
-echo "   sudo bash $SCRIPT_DIR/firewall.sh"
-echo ""
-echo "5. Open https://$DOMAIN/admin-secret-path/"
+echo "4. Open https://$DOMAIN/admin-secret-path/"
 echo ""
 echo "Setup complete"
