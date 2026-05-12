@@ -1,15 +1,36 @@
 {
     auto_https disable_redirects
-}
 
-https://example.com {
-    bind 0.0.0.0
-    encode gzip zstd
-
-    tls {
-        protocols tls1.3
+    # Указываем Caddy принимать PROXY protocol от Xray на порту 8080
+    servers :8080 {
+        listener_wrappers {
+            proxy_protocol {
+                timeout 2s
+                allow 127.0.0.1/32
+            }
+        }
     }
 
+    # Глобальная настройка доверия прокси:
+    # Разрешаем Caddy доверять IP-адресам, переданным от 127.0.0.1 (от Xray)
+    # Это необходимо для корректного заполнения {remote_host}
+    # Поддержка static IP ranges появилась в Caddy 2.7+
+    servers {
+        trusted_proxies static 127.0.0.1/32
+    }
+}
+
+# Блок для автоматического получения сертификатов Let's Encrypt
+http://example.com, :80 {
+    bind 0.0.0.0
+    redir https://example.com{uri} permanent
+}
+
+# Внутренний блок, принимающий трафик от Xray (только PROXY protocol)
+http://127.0.0.1:8080 {
+    encode gzip zstd
+
+    # Панель администратора
     handle_path /admin-* {
         basic_auth {
             admin $2a$14$HASHEDPASSWORD
@@ -19,22 +40,14 @@ https://example.com {
         }
     }
 
+    # Подписки
     handle_path /sub-* {
         reverse_proxy 127.0.0.1:2096 {
             header_up X-Real-IP {remote_host}
         }
     }
 
-    handle /api/v* {
-        reverse_proxy 127.0.0.1:2023 {
-            flush_interval -1
-            transport http {
-                versions h2c 2
-            }
-            header_up X-Real-IP {remote_host}
-        }
-    }
-
+    # Все остальное проксируем на Lampac (заглушку)
     handle {
         reverse_proxy 127.0.0.1:9118 {
             header_up X-Forwarded-Proto https
@@ -50,14 +63,4 @@ https://example.com {
         -Server
         -X-Powered-By
     }
-}
-
-http://example.com {
-    bind 0.0.0.0
-    redir https://example.com{uri} permanent
-}
-
-:80 {
-    bind 0.0.0.0
-    respond 204
 }
