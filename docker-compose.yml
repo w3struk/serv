@@ -13,8 +13,7 @@ services:
     container_name: lampac
     restart: unless-stopped
     shm_size: 1024mb
-    ports:
-      - "127.0.0.1:9118:9118"
+    network_mode: host
     volumes:
       - ./lampac/config/passwd:/lampac/passwd
       - ./lampac/config/init.conf:/lampac/init.conf

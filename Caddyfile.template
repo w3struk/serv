@@ -1,7 +1,7 @@
 {
     auto_https disable_redirects
 
-    servers :8080 {
+    servers 127.0.0.1:8080 {
         listener_wrappers {
             proxy_protocol {
                 timeout 2s
@@ -20,10 +20,18 @@ http://:80 {
     redir https://$DOMAIN{uri} permanent
 }
 
-http://127.0.0.1:8080 {
+:8080 {
+    bind 127.0.0.1
     encode gzip zstd
 
-    handle_path /$ADMIN_PATH/* {
+    @xui-api {
+        path /login /csrf-token /getTwoFactorEnable /panel/* /xui/* /assets/*
+    }
+    handle @xui-api {
+        reverse_proxy 127.0.0.1:2053
+    }
+
+    handle /$ADMIN_PATH/* {
         basic_auth {
             admin $WEB_PASSWORD_HASH
         }

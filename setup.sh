@@ -39,6 +39,7 @@ echo ""
 
 ADMIN_PATH="admin-$(head -c 8 /dev/urandom | base64 | tr -dc 'a-z0-9' | head -c 8)"
 SUB_PATH="sub-$(head -c 8 /dev/urandom | base64 | tr -dc 'a-z0-9' | head -c 8)"
+XHTTP_PATH="api/v$(shuf -i 1-999 -n 1)"
 LAMJac_PASSWORD="$(head -c 16 /dev/urandom | base64 | tr -dc 'a-zA-Z0-9' | head -c 16)"
 CLIENT_ID=$(cat /proc/sys/kernel/random/uuid)
 
@@ -46,6 +47,7 @@ echo "=== Configuration Summary ==="
 echo "Domain:      $DOMAIN"
 echo "Admin path:  /$ADMIN_PATH/"
 echo "Sub path:    /$SUB_PATH/"
+echo "XHTTP path:  /$XHTTP_PATH/"
 echo "Client UUID: $CLIENT_ID"
 echo ""
 
@@ -109,7 +111,7 @@ echo "[7/8] Configuring 3x-ui Inbounds via API..."
 echo "  Waiting for 3x-ui to be ready (max 60s)..."
 MAX_RETRIES=30
 RETRY_COUNT=0
-until curl -s -o /dev/null -w "%{http_code}" http://127.0.0.1:2053/login | grep -q "200"; do
+until curl -s -o /dev/null -w "%{http_code}" http://127.0.0.1:2053/csrf-token | grep -q "200"; do
     sleep 2
     RETRY_COUNT=$((RETRY_COUNT+1))
     if [ $RETRY_COUNT -ge $MAX_RETRIES ]; then
@@ -119,56 +121,122 @@ until curl -s -o /dev/null -w "%{http_code}" http://127.0.0.1:2053/login | grep 
 done
 
 COOKIE_FILE=$(mktemp)
-# Авторизация
-LOGIN_RES=$(curl -s -X POST "http://127.0.0.1:2053/login" \
-     -d "username=$XUI_USER&password=$XUI_PASS" \
-     -c "$COOKIE_FILE")
 
-if [[ ! "$LOGIN_RES" == *"true"* ]]; then
-    echo "Error: 3x-ui login failed. Check credentials."
+# Helper: extract CSRF token from GET /csrf-token (also updates session cookie)
+csrf_token() {
+    curl -s --max-time 5 -b "$COOKIE_FILE" -c "$COOKIE_FILE" http://127.0.0.1:2053/csrf-token \
+        | python3 -c "import sys,json; print(json.load(sys.stdin)['obj'])"
+}
+
+# Helper: POST JSON to 3x-ui API with CSRF + session cookie
+xui_json() {
+    local url="$1" json="$2"
+    local token
+    token=$(csrf_token)
+    curl -s --max-time 10 -b "$COOKIE_FILE" -c "$COOKIE_FILE" -X POST "$url" \
+        -H "Content-Type: application/json" \
+        -H "X-Requested-With: XMLHttpRequest" \
+        -H "X-CSRF-Token: $token" \
+        -d "$json"
+}
+
+echo "  Getting CSRF token..."
+CSRF_TOKEN=$(csrf_token)
+if [ -z "$CSRF_TOKEN" ]; then
+    echo "Error: Failed to get CSRF token"
     rm "$COOKIE_FILE"
     exit 1
 fi
 
-# 1. Добавляем XHTTP Backend (Порт 2023)
-XHTTP_JSON='{
-  "enable": true,
-  "remark": "VLESS-XHTTP-Backend",
-  "listen": "127.0.0.1",
-  "port": 2023,
-  "protocol": "vless",
-  "settings": "{\"clients\": [{\"id\": \"'$CLIENT_ID'\"}], \"decryption\": \"none\", \"fallbacks\": []}",
-  "streamSettings": "{\"network\": \"xhttp\", \"security\": \"none\", \"xhttpSettings\": {\"path\": \"/api/v*\", \"mode\": \"request-response\"}}",
-  "sniffing": "{\"enabled\": false}",
-  "allocate": "{\"strategy\": \"always\", \"refresh\": 5, \"concurrency\": 3}"
-}'
+echo "  Logging in with default credentials (admin/admin)..."
+LOGIN_RESP=$(curl -s --max-time 10 -b "$COOKIE_FILE" -c "$COOKIE_FILE" \
+    -X POST "http://127.0.0.1:2053/login" \
+    -H "Content-Type: application/x-www-form-urlencoded; charset=UTF-8" \
+    -H "X-Requested-With: XMLHttpRequest" \
+    -H "X-CSRF-Token: $CSRF_TOKEN" \
+    -d "username=admin&password=admin")
 
-curl -s -X POST "http://127.0.0.1:2053/panel/api/inbounds/add" \
-     -b "$COOKIE_FILE" \
-     -H "Content-Type: application/json" \
-     -d "$XHTTP_JSON" > /dev/null
+if ! echo "$LOGIN_RESP" | python3 -c "import sys,json; sys.exit(0 if json.load(sys.stdin).get('success') else 1)" 2>/dev/null; then
+    echo "Error: 3x-ui login failed. Check if the panel is running with default credentials (admin/admin)."
+    rm "$COOKIE_FILE"
+    exit 1
+fi
 
-# 2. Добавляем XTLS-Vision Frontend (Порт 443)
+# 1. Add XHTTP Backend (Port 2023)
+echo "  Adding XHTTP Backend inbound..."
+XHTTP_RESP=$(xui_json "http://127.0.0.1:2053/panel/api/inbounds/add" '{
+  "up": 0, "down": 0, "total": 0,
+  "remark": "VLESS-XHTTP-Backend", "enable": true, "expiryTime": 0,
+  "listen": "127.0.0.1", "port": 2023, "protocol": "vless",
+  "settings": "{\"clients\":[{\"id\":\"'"$CLIENT_ID"'\"}],\"decryption\":\"none\",\"fallbacks\":[]}",
+  "streamSettings": "{\"network\":\"xhttp\",\"security\":\"none\",\"externalProxy\":[{\"dest\":\"'"$DOMAIN"'\",\"port\":443,\"forceTls\":\"same\"}],\"xhttpSettings\":{\"path\":\"'"/$XHTTP_PATH"'\",\"mode\":\"auto\"}}",
+  "sniffing": "{\"enabled\":true,\"destOverride\":[\"http\",\"tls\",\"quic\",\"fakedns\"]}",
+  "allocate": "{\"strategy\":\"always\",\"refresh\":5,\"concurrency\":3}"
+}') || true
+if ! echo "$XHTTP_RESP" | python3 -c "import sys,json; sys.exit(0 if json.load(sys.stdin).get('success') else 1)" 2>/dev/null; then
+    echo "Warning: XHTTP Backend creation failed (may already exist)"
+fi
+
+# 2. Add XTLS-Vision Frontend (Port 443)
+echo "  Adding XTLS-Vision Frontend inbound..."
 CERT_DIR="/etc/x-ui/certs/acme-v02.api.letsencrypt.org-directory/$DOMAIN"
-FRONTEND_JSON='{
-  "enable": true,
-  "remark": "VLESS-TCP-Vision-Frontend",
-  "listen": "",
-  "port": 443,
-  "protocol": "vless",
-  "settings": "{\"clients\": [{\"id\": \"'$CLIENT_ID'\", \"flow\": \"xtls-rprx-vision\"}], \"decryption\": \"none\", \"fallbacks\": [{\"dest\": \"2023\", \"xver\": 0, \"path\": \"/api/v*\"}, {\"dest\": \"8080\", \"xver\": 2}]}",
-  "streamSettings": "{\"network\": \"tcp\", \"security\": \"tls\", \"tlsSettings\": {\"serverName\": \"'$DOMAIN'\", \"minVersion\": \"1.3\", \"maxVersion\": \"1.3\", \"cipherSuites\": \"\", \"certificates\": [{\"certificateFile\": \"'$CERT_DIR'/'$DOMAIN'.crt\", \"keyFile\": \"'$CERT_DIR'/'$DOMAIN'.key\"}], \"alpn\": [\"h2\", \"http/1.1\"]}}",
-  "sniffing": "{\"enabled\": true, \"destOverride\": [\"http\", \"tls\", \"quic\", \"fakedns\"]}",
-  "allocate": "{\"strategy\": \"always\", \"refresh\": 5, \"concurrency\": 3}"
-}'
+FRONTEND_RESP=$(xui_json "http://127.0.0.1:2053/panel/api/inbounds/add" '{
+  "up": 0, "down": 0, "total": 0,
+  "remark": "VLESS-TCP-Vision-Frontend", "enable": true, "expiryTime": 0,
+  "listen": "", "port": 443, "protocol": "vless",
+  "settings": "{\"clients\":[{\"id\":\"'"$CLIENT_ID"'\",\"flow\":\"xtls-rprx-vision\"}],\"decryption\":\"none\",\"fallbacks\":[{\"dest\":\"2023\",\"xver\":0,\"path\":\"'"/$XHTTP_PATH"'"},{\"dest\":\"8080\",\"xver\":2}]}",
+  "streamSettings": "{\"network\":\"tcp\",\"security\":\"tls\",\"tlsSettings\":{\"serverName\":\"'"$DOMAIN"'\",\"minVersion\":\"1.3\",\"maxVersion\":\"1.3\",\"cipherSuites\":\"\",\"certificates\":[{\"certificateFile\":\"'"$CERT_DIR/$DOMAIN"'.crt\",\"keyFile\":\"'"$CERT_DIR/$DOMAIN"'.key\"}],\"alpn\":[\"h2\",\"http/1.1\"]}}",
+  "sniffing": "{\"enabled\":true,\"destOverride\":[\"http\",\"tls\",\"quic\",\"fakedns\"]}",
+  "allocate": "{\"strategy\":\"always\",\"refresh\":5,\"concurrency\":3}"
+}') || true
+if ! echo "$FRONTEND_RESP" | python3 -c "import sys,json; sys.exit(0 if json.load(sys.stdin).get('success') else 1)" 2>/dev/null; then
+    echo "Warning: Frontend inbound creation failed (certs may not be ready yet)"
+fi
 
-curl -s -X POST "http://127.0.0.1:2053/panel/api/inbounds/add" \
-     -b "$COOKIE_FILE" \
-     -H "Content-Type: application/json" \
-     -d "$FRONTEND_JSON" > /dev/null
+# 3. Update 3x-ui credentials to user-provided values (if different from defaults)
+if [ "$XUI_USER" != "admin" ] || [ "$XUI_PASS" != "admin" ]; then
+    echo "  Updating 3x-ui credentials..."
+    CRED_RESP=$(xui_json "http://127.0.0.1:2053/panel/setting/updateUser" \
+        '{"oldUsername":"admin","oldPassword":"admin","newUsername":"'"$XUI_USER"'","newPassword":"'"$XUI_PASS"'"}')
+    if echo "$CRED_RESP" | python3 -c "import sys,json; sys.exit(0 if json.load(sys.stdin).get('success') else 1)" 2>/dev/null; then
+        echo "  Credentials updated"
+    else
+        echo "Warning: Failed to update credentials"
+    fi
+fi
+
+# 4. Configure subscription and panel settings
+echo "  Configuring panel and subscription settings..."
+ALL_SETTINGS_RESP=$(xui_json "http://127.0.0.1:2053/panel/setting/all" "{}")
+UPDATED_SETTINGS=$(echo "$ALL_SETTINGS_RESP" | python3 -c "
+import sys, json
+data = json.load(sys.stdin)
+obj = data['obj']
+obj['webBasePath'] = '/$ADMIN_PATH/'
+obj['subEnable'] = True
+obj['subPath'] = '/$SUB_PATH/'
+obj['subURI'] = 'https://$DOMAIN/$SUB_PATH/'
+print(json.dumps(obj))
+")
+SETTINGS_RESP=$(xui_json "http://127.0.0.1:2053/panel/setting/update" "$UPDATED_SETTINGS")
+if echo "$SETTINGS_RESP" | python3 -c "import sys,json; sys.exit(0 if json.load(sys.stdin).get('success') else 1)" 2>/dev/null; then
+    echo "  Panel and subscription configured"
+else
+    echo "Warning: Failed to configure panel settings"
+fi
+
+# 5. Restart panel to apply settings
+echo "  Restarting panel..."
+CSRF=$(csrf_token)
+curl -s --max-time 10 -b "$COOKIE_FILE" -c "$COOKIE_FILE" -X POST "http://127.0.0.1:2053/panel/setting/restartPanel" \
+    -H "Content-Type: application/json" \
+    -H "X-Requested-With: XMLHttpRequest" \
+    -H "X-CSRF-Token: $CSRF" \
+    -d "{}" > /dev/null || true
+sleep 3
 
 rm "$COOKIE_FILE"
-echo "  Inbounds configured via API"
+echo "  Inbounds and subscription configured via API"
 
 echo "[8/8] Done."
 echo ""
@@ -181,6 +249,7 @@ echo "Credentials:"
 echo "  Web Auth: admin / [your password]"
 echo "  3x-ui:    $XUI_USER / $XUI_PASS"
 echo "  UUID:     $CLIENT_ID"
+echo "  XHTTP:    /$XHTTP_PATH/"
 echo "  Lampac:   $LAMJac_PASSWORD"
 echo ""
 echo "Note: Certificates might take a minute to generate. If the 443 port"

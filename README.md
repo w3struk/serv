@@ -83,8 +83,7 @@ docker run hello-world
 ### Развёртывание
 
 ```bash
-cd /opt
-git clone https://github.com/w3struk/serv & cd /serv
+cd /opt && git clone https://github.com/w3struk/serv && cd /serv
 ./setup.sh
 ```
 
@@ -107,56 +106,22 @@ git clone https://github.com/w3struk/serv & cd /serv
 2. Basic Auth (от Caddy): логин `admin`, ваш пароль
 3. Страница входа 3x-ui: логин `admin`, пароль `admin`
 
-> [!WARNING]
-> Сразу измените стандартные логин и пароль: `Panel Settings -> Authentication`.
-> Установите `Panel Listening IP` на `127.0.0.1`.
-
-### Создание inbounds
-
-#### VLESS + XHTTP за Caddy
-
-- **Protocol:** VLESS
-- **Listen IP:** `127.0.0.1`
-- **Port:** `2023`
-- **Transmission:** XHTTP
-- **Security:** none
-- **XHTTP Mode:** auto
-- **XHTTP Path:** `/api/v*` (свой уникальный path)
-- **Sniffing:** enable — HTTP, TLS, QUIC, FAKEDNS
-
-**External Proxy:**
-- **Dest/Domain/IP:** `mydomain.com`
-- **Port:** `443`
-- **Force TLS:** включить
-
-### Настройка подписки
-
-1. `Panel Settings → Subscription → URI Path (sub)`: измените `/sub/` на путь из вывода скрипта (например `/sub-abc123/`)
-2. `Panel Settings → Subscription → Reverse Proxy URI`: установите `https://mydomain.com/sub-abc123/`
-3. Сохраните и перезапустите панель
-
 ## Благодарности
 
 - [Akiyamov](https://github.com/Akiyamov/xray-vps-setup) — xray-vps-setup
 - [MHSanaei](https://github.com/MHSanaei/3x-ui) — 3x-ui
 - [Lampac NextGen](https://github.com/lampac-nextgen/lampac)
-- [CHIZI-0618](https://github.com/CHIZI-0618/) — AndroidTProxyShell
 - https://eikeidev.github.io/vless-xtls-converter/
 
 ## полезное
-
 
 ```bash
 docker ps #список контейнеров
 docker compose up -d    # start
 docker compose down     # stop
 docker compose logs -f  # logs
-docker system prune -a
-docker compose logs --tail 1000 lampac #Показать последние 1000 строк лога
+docker system prune -a  # clear all data
 docker volume ls
 docker exec -it lampac bash
 docker compose down && docker compose up -d && docker compose logs -f
-docker system prune -a --volumes - Очистить все данные (контейнеры, образы, тома)
-
-git pull origin main
 ```
