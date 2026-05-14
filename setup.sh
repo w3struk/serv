@@ -496,7 +496,7 @@ XHTTP_RESP=$(xui_json "http://127.0.0.1:2053/panel/api/inbounds/add" '{
   "remark": "VLESS-XHTTP-Backend", "enable": true, "expiryTime": 0,
   "listen": "127.0.0.1", "port": 2023, "protocol": "vless",
   "settings": "{\"clients\":[{\"id\":\"'"$CLIENT_ID"'\",\"subId\":\"'"$SUB_ID"'\"}],\"decryption\":\"none\",\"fallbacks\":[]}",
-  "streamSettings": "{\"network\":\"xhttp\",\"security\":\"none\",\"externalProxy\":[{\"dest\":\"'"$DOMAIN"'\",\"port\":443,\"forceTls\":\"tls\",\"remark\":\"\"}],\"xhttpSettings\":{\"path\":\"'"/$XHTTP_PATH"'\",\"mode\":\"auto\"},\"finalmask\":{}}",
+  "streamSettings": "{\"network\":\"xhttp\",\"security\":\"none\",\"externalProxy\":[{\"dest\":\"'"$DOMAIN"'\",\"port\":443,\"forceTls\":\"tls\",\"remark\":\"\"}],\"xhttpSettings\":{\"path\":\"'"/$XHTTP_PATH"'\",\"mode\":\"auto\",\"headers\":{\"User-Agent\":\"!chrome\"}},\"finalmask\":{}}",
   "sniffing": "{\"enabled\":true,\"destOverride\":[\"http\",\"tls\"],\"routeOnly\":true}",
   "allocate": "{\"strategy\":\"always\",\"refresh\":5,\"concurrency\":3}"
 }') || true
