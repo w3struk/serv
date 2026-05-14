@@ -143,6 +143,9 @@ add_client() {
     UUID_MODE=${UUID_MODE:-1}
     echo ""
 
+    read -p "Enter client email/purpose (or press Enter for auto): " CLIENT_EMAIL
+    echo ""
+
     local csrf
 
     get_inbound_ids() {
@@ -153,10 +156,14 @@ add_client() {
         ID_VISION=$(echo "$resp" | python3 -c "import sys,json; [print(i['id']) for i in json.load(sys.stdin)['obj'] if i.get('port')==443]" 2>/dev/null)
     }
 
+    gen_email() {
+        echo "$(tr -dc 'a-z0-9' < /dev/urandom | head -c 8)@$(tr -dc 'a-z0-9' < /dev/urandom | head -c 4).com"
+    }
+
     add_client_to_inbound() {
-        local id="$1" cid="$2" sid="$3" flow="$4"
-        local csv="{\\\"id\\\":\\\"$cid\\\",\\\"subId\\\":\\\"$sid\\\"}"
-        [ -n "$flow" ] && csv="{\\\"id\\\":\\\"$cid\\\",\\\"flow\\\":\\\"$flow\\\",\\\"subId\\\":\\\"$sid\\\"}"
+        local id="$1" cid="$2" sid="$3" email="$4" flow="$5"
+        local csv="{\\\"id\\\":\\\"$cid\\\",\\\"email\\\":\\\"$email\\\",\\\"subId\\\":\\\"$sid\\\"}"
+        [ -n "$flow" ] && csv="{\\\"id\\\":\\\"$cid\\\",\\\"flow\\\":\\\"$flow\\\",\\\"email\\\":\\\"$email\\\",\\\"subId\\\":\\\"$sid\\\"}"
         local csrf; csrf=$(csrf_token)
         curl -s --max-time 5 -b "$COOKIE_FILE" -X POST "http://127.0.0.1:2053${API_PREFIX}/panel/api/inbounds/addClient" \
             -H "Content-Type: application/json" -H "X-Requested-With: XMLHttpRequest" -H "X-CSRF-Token: $csrf" \
@@ -171,13 +178,15 @@ add_client() {
         CID2=$(cat /proc/sys/kernel/random/uuid)
         SID1=$(head -c 16 /dev/urandom | md5sum | head -c 16)
         SID2=$(head -c 16 /dev/urandom | md5sum | head -c 16)
+        EMAIL1="${CLIENT_EMAIL:-$(gen_email)}"
+        EMAIL2="${CLIENT_EMAIL:-$(gen_email)}"
 
-        if add_client_to_inbound "$ID_XHTTP" "$CID1" "$SID1" ""; then
+        if add_client_to_inbound "$ID_XHTTP" "$CID1" "$SID1" "$EMAIL1" ""; then
             echo -e "  ${G}[OK]${N} XHTTP client added"
         else
             echo -e "  ${R}[ERROR]${N} Failed to add XHTTP client"
         fi
-        if add_client_to_inbound "$ID_VISION" "$CID2" "$SID2" "xtls-rprx-vision"; then
+        if add_client_to_inbound "$ID_VISION" "$CID2" "$SID2" "$EMAIL2" "xtls-rprx-vision"; then
             echo -e "  ${G}[OK]${N} Vision client added"
         else
             echo -e "  ${R}[ERROR]${N} Failed to add Vision client"
@@ -190,8 +199,8 @@ add_client() {
         echo ""
         SUB_PATH=$(sqlite3 /opt/serv/3x-ui/db/x-ui.db "SELECT value FROM settings WHERE key='subPath' LIMIT 1;" 2>/dev/null || echo "/sub/")
         echo -e "${B}Subscription links:${N}"
-        echo -e "  ${C}XHTTP:${N}  https://${C}${DOMAIN}${N}${SUB_PATH}${SID1}"
-        echo -e "  ${C}Vision:${N} https://${C}${DOMAIN}${N}${SUB_PATH}${SID2}"
+        echo -e "  ${C}XHTTP:${N}  https://${C}${DOMAIN}${N}${SUB_PATH}${SID1}  (${EMAIL1})"
+        echo -e "  ${C}Vision:${N} https://${C}${DOMAIN}${N}${SUB_PATH}${SID2}  (${EMAIL2})"
         echo ""
         echo -e "${B}UUIDs:${N}"
         echo -e "  ${Y}XHTTP:${N}  ${C}$CID1${N}"
@@ -200,13 +209,14 @@ add_client() {
     else
         CID=$(cat /proc/sys/kernel/random/uuid)
         SID=$(head -c 16 /dev/urandom | md5sum | head -c 16)
+        EMAIL="${CLIENT_EMAIL:-$(gen_email)}"
 
-        if add_client_to_inbound "$ID_XHTTP" "$CID" "$SID" ""; then
+        if add_client_to_inbound "$ID_XHTTP" "$CID" "$SID" "$EMAIL" ""; then
             echo -e "  ${G}[OK]${N} Client added to XHTTP backend"
         else
             echo -e "  ${R}[ERROR]${N} Failed to add client to XHTTP backend"
         fi
-        if add_client_to_inbound "$ID_VISION" "$CID" "$SID" "xtls-rprx-vision"; then
+        if add_client_to_inbound "$ID_VISION" "$CID" "$SID" "$EMAIL" "xtls-rprx-vision"; then
             echo -e "  ${G}[OK]${N} Client added to Vision frontend"
         else
             echo -e "  ${R}[ERROR]${N} Failed to add client to Vision frontend"
@@ -219,7 +229,7 @@ add_client() {
         echo ""
         SUB_PATH=$(sqlite3 /opt/serv/3x-ui/db/x-ui.db "SELECT value FROM settings WHERE key='subPath' LIMIT 1;" 2>/dev/null || echo "/sub/")
         echo -e "${B}Subscription link:${N}"
-        echo -e "  ${C}Single:${N} https://${C}${DOMAIN}${N}${SUB_PATH}${SID}"
+        echo -e "  ${C}Single:${N} https://${C}${DOMAIN}${N}${SUB_PATH}${SID}  (${EMAIL})"
         echo ""
         echo -e "${B}UUID:${N} ${C}$CID${N}"
     fi
