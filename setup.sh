@@ -2,42 +2,312 @@
 set -e
 
 if [ "$EUID" -ne 0 ]; then
-    echo "Error: Run as root"
+    echo -e "\033[0;31m[ERROR]\033[0m Run as root"
     exit 1
 fi
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd -P)"
 SERVER_DIR="$SCRIPT_DIR"
 
-usage() {
-    echo "Usage: $0"
-    echo ""
-    echo "Domain and credentials will be prompted interactively."
-    exit 1
+# Colors
+R="\033[0;31m"
+G="\033[0;32m"
+Y="\033[0;33m"
+C="\033[0;36m"
+B="\033[1m"
+N="\033[0m"
+
+# API helpers
+csrf_token() {
+    curl -s --max-time 5 -b "$COOKIE_FILE" -c "$COOKIE_FILE" http://127.0.0.1:2053/csrf-token \
+        | python3 -c "import sys,json; print(json.load(sys.stdin)['obj'])"
 }
 
-[ $# -gt 0 ] && usage
+xui_json() {
+    local url="$1" json="$2"
+    local token
+    token=$(csrf_token)
+    curl -s --max-time 10 -b "$COOKIE_FILE" -c "$COOKIE_FILE" -X POST "$url" \
+        -H "Content-Type: application/json" \
+        -H "X-Requested-With: XMLHttpRequest" \
+        -H "X-CSRF-Token: $token" \
+        -d "$json"
+}
 
-echo "=== steal-oneself Server Setup ==="
-echo ""
+xui_login() {
+    local u="$1" p="$2"
+    local csrf
+    csrf=$(csrf_token)
+    [ -z "$csrf" ] && return 1
+    local resp
+    resp=$(curl -s --max-time 10 -b "$COOKIE_FILE" -c "$COOKIE_FILE" \
+        -X POST "http://127.0.0.1:2053/login" \
+        -H "Content-Type: application/x-www-form-urlencoded; charset=UTF-8" \
+        -H "X-Requested-With: XMLHttpRequest" \
+        -H "X-CSRF-Token: $csrf" \
+        -d "username=$u&password=$p")
+    echo "$resp" | python3 -c "import sys,json; sys.exit(0 if json.load(sys.stdin).get('success') else 1)" 2>/dev/null
+}
+
+# Check if docker services are running
+check_installed() {
+    docker compose ls --filter "name=serv" 2>/dev/null | grep -q "serv" && return 0
+    return 1
+}
+
+print_banner() {
+    echo ""
+    echo -e "${C}╔══════════════════════════════════════╗${N}"
+    echo -e "${C}║   ${B}steal-oneself Server Setup${N}${C}        ║${N}"
+    echo -e "${C}╚══════════════════════════════════════╝${N}"
+    echo ""
+}
+
+print_summary() {
+    echo ""
+    echo -e "${G}╔══════════════════════════════════════╗${N}"
+    echo -e "${G}║     ${B}Setup Complete${N}${G}                 ║${N}"
+    echo -e "${G}╚══════════════════════════════════════╝${N}"
+    echo ""
+    echo -e "${B}URLs:${N}"
+    echo -e "  ${C}Panel:${N}  https://${C}$DOMAIN${N}/$ADMIN_PATH/"
+    echo ""
+    if [ -n "${SUB_ID:+x}" ]; then
+        echo -e "${B}Subscription links:${N}"
+        if [ "$UUID_MODE" = "2" ]; then
+            echo -e "  ${C}XHTTP:${N}  https://${C}$DOMAIN${N}/$SUB_PATH/$SUB_ID"
+            echo -e "  ${C}Vision:${N} https://${C}$DOMAIN${N}/$SUB_PATH/$SUB_ID_VISION"
+        else
+            echo -e "  ${C}Single:${N} https://${C}$DOMAIN${N}/$SUB_PATH/$SUB_ID"
+        fi
+        echo ""
+    fi
+    echo -e "${B}Credentials:${N}"
+    echo -e "  ${Y}Web Auth:${N} admin / [your password]"
+    echo -e "  ${Y}3x-ui:${N}    $XUI_USER / ${G}$XUI_PASS${N}"
+    if [ -n "$CLIENT_ID" ]; then
+        echo -e "  ${Y}XHTTP UUID:${N} ${C}$CLIENT_ID${N}"
+    fi
+    if [ -n "$CLIENT_ID_VISION" ]; then
+        echo -e "  ${Y}Vision UUID:${N} ${C}$CLIENT_ID_VISION${N}"
+    fi
+    if [ -n "$SUB_ID_VISION" ]; then
+        echo -e "  ${Y}Vision SubID:${N} ${C}$SUB_ID_VISION${N}"
+    fi
+    if [ -n "$XHTTP_PATH" ]; then
+        echo -e "  ${Y}XHTTP path:${N} /$XHTTP_PATH/"
+    fi
+    if [ -n "$LAMJac_PASSWORD" ]; then
+        echo -e "  ${Y}Lampac:${N}   $LAMJac_PASSWORD"
+    fi
+    echo ""
+    echo -e "${Y}Note: Certificates might take a minute to generate.${N}"
+    echo -e "${Y}If the 443 port is not working immediately, wait a bit and restart 3x-ui.${N}"
+    echo ""
+}
+
+add_client() {
+    print_banner
+    echo -e "${G}Adding new client to existing installation...${N}"
+    echo ""
+
+    check_installed || {
+        echo -e "${R}[ERROR]${N} Installation not found. Run without arguments to install."
+        exit 1
+    }
+
+    read -p "3x-ui Username: " XUI_USER
+    read -s -p "3x-ui Password: " XUI_PASS
+    echo ""
+
+    DOMAIN=$(docker compose exec 3xui_app sh -c 'cat /etc/x-ui/x-ui.db 2>/dev/null; cat bin/config.json 2>/dev/null' 2>/dev/null | python3 -c "
+import sys, json
+try:
+    c = json.load(sys.stdin)
+    for i in c.get('inbounds', []):
+        if i.get('port') == 443:
+            print(i.get('streamSettings', {}).get('tlsSettings', {}).get('serverName', ''))
+except: pass
+" 2>/dev/null || true)
+    [ -z "$DOMAIN" ] && read -p "Domain: " DOMAIN
+
+    COOKIE_FILE=$(mktemp)
+    if ! xui_login "$XUI_USER" "$XUI_PASS"; then
+        echo -e "${R}[ERROR]${N} Login failed"
+        rm "$COOKIE_FILE"
+        exit 1
+    fi
+    echo -e "${G}Logged in${N}"
+
+    echo ""
+    echo "Client Configuration:"
+    echo "  1) Single UUID for both inbounds"
+    echo "  2) Different UUIDs, separate subscriptions"
+    read -p "Choose (default: 1): " UUID_MODE
+    UUID_MODE=${UUID_MODE:-1}
+    echo ""
+
+    local csrf
+
+    if [ "$UUID_MODE" = "2" ]; then
+        CID1=$(cat /proc/sys/kernel/random/uuid)
+        CID2=$(cat /proc/sys/kernel/random/uuid)
+        SID1=$(head -c 16 /dev/urandom | md5sum | head -c 16)
+        SID2=$(head -c 16 /dev/urandom | md5sum | head -c 16)
+
+        # Get inbound list to find IDs
+        csrf=$(csrf_token)
+        INBOUNDS=$(curl -s --max-time 5 -b "$COOKIE_FILE" "http://127.0.0.1:2053/panel/api/inbounds/list" \
+            -H "X-Requested-With: XMLHttpRequest" \
+            -H "X-CSRF-Token: $csrf")
+        ID_XHTTP=$(echo "$INBOUNDS" | python3 -c "import sys,json; [print(i['id']) for i in json.load(sys.stdin)['obj'] if i.get('port')==2023]" 2>/dev/null)
+        ID_VISION=$(echo "$INBOUNDS" | python3 -c "import sys,json; [print(i['id']) for i in json.load(sys.stdin)['obj'] if i.get('port')==443]" 2>/dev/null)
+
+        csrf=$(csrf_token)
+        RESP1=$(curl -s --max-time 5 -b "$COOKIE_FILE" -X POST "http://127.0.0.1:2053/panel/api/inbounds/addClient" \
+            -H "Content-Type: application/json" -H "X-Requested-With: XMLHttpRequest" -H "X-CSRF-Token: $csrf" \
+            -d "{\"id\":$ID_XHTTP,\"settings\":\"{\\\"clients\\\":[{\\\"id\\\":\\\"$CID1\\\",\\\"subId\\\":\\\"$SID1\\\"}]}\"}")
+        csrf=$(csrf_token)
+        RESP2=$(curl -s --max-time 5 -b "$COOKIE_FILE" -X POST "http://127.0.0.1:2053/panel/api/inbounds/addClient" \
+            -H "Content-Type: application/json" -H "X-Requested-With: XMLHttpRequest" -H "X-CSRF-Token: $csrf" \
+            -d "{\"id\":$ID_VISION,\"settings\":\"{\\\"clients\\\":[{\\\"id\\\":\\\"$CID2\\\",\\\"flow\\\":\\\"xtls-rprx-vision\\\",\\\"subId\\\":\\\"$SID2\\\"}]}\"}")
+
+        if echo "$RESP1" | python3 -c "import sys,json; sys.exit(0 if json.load(sys.stdin).get('success') else 1)" 2>/dev/null; then
+            echo -e "${G}[OK]${N} XHTTP client added"
+        else
+            echo -e "${R}[ERROR]${N} Failed to add XHTTP client"
+        fi
+        if echo "$RESP2" | python3 -c "import sys,json; sys.exit(0 if json.load(sys.stdin).get('success') else 1)" 2>/dev/null; then
+            echo -e "${G}[OK]${N} Vision client added"
+        else
+            echo -e "${R}[ERROR]${N} Failed to add Vision client"
+        fi
+
+        echo ""
+        echo -e "${G}╔══════════════════════════════════════╗${N}"
+        echo -e "${G}║     ${B}Client Added${N}${G}                  ║${N}"
+        echo -e "${G}╚══════════════════════════════════════╝${N}"
+        echo ""
+        echo -e "${B}Subscription links:${N}"
+        SUB_PATH=$(sqlite3 /opt/serv/3x-ui/db/x-ui.db "SELECT value FROM settings WHERE key='subPath' LIMIT 1;" 2>/dev/null || echo "/sub/")
+        echo -e "  ${C}XHTTP:${N}  https://${C}${DOMAIN}${N}${SUB_PATH}${SID1}"
+        echo -e "  ${C}Vision:${N} https://${C}${DOMAIN}${N}${SUB_PATH}${SID2}"
+        echo ""
+        echo -e "${B}UUIDs:${N}"
+        echo -e "  ${Y}XHTTP:${N}  ${C}$CID1${N}"
+        echo -e "  ${Y}Vision:${N} ${C}$CID2${N}"
+    else
+        CID=$(cat /proc/sys/kernel/random/uuid)
+        SID=$(head -c 16 /dev/urandom | md5sum | head -c 16)
+
+        csrf=$(csrf_token)
+        INBOUNDS=$(curl -s --max-time 5 -b "$COOKIE_FILE" "http://127.0.0.1:2053/panel/api/inbounds/list" \
+            -H "X-Requested-With: XMLHttpRequest" \
+            -H "X-CSRF-Token: $csrf")
+        ID_XHTTP=$(echo "$INBOUNDS" | python3 -c "import sys,json; [print(i['id']) for i in json.load(sys.stdin)['obj'] if i.get('port')==2023]" 2>/dev/null)
+        ID_VISION=$(echo "$INBOUNDS" | python3 -c "import sys,json; [print(i['id']) for i in json.load(sys.stdin)['obj'] if i.get('port')==443]" 2>/dev/null)
+
+        csv="{\\\"id\\\":\\\"$CID\\\",\\\"subId\\\":\\\"$SID\\\"}"
+        csrf=$(csrf_token)
+        RESP1=$(curl -s --max-time 5 -b "$COOKIE_FILE" -X POST "http://127.0.0.1:2053/panel/api/inbounds/addClient" \
+            -H "Content-Type: application/json" -H "X-Requested-With: XMLHttpRequest" -H "X-CSRF-Token: $csrf" \
+            -d "{\"id\":$ID_XHTTP,\"settings\":\"{\\\"clients\\\":[${csv}]}\"}")
+
+        csv2="{\\\"id\\\":\\\"$CID\\\",\\\"flow\\\":\\\"xtls-rprx-vision\\\",\\\"subId\\\":\\\"$SID\\\"}"
+        csrf=$(csrf_token)
+        RESP2=$(curl -s --max-time 5 -b "$COOKIE_FILE" -X POST "http://127.0.0.1:2053/panel/api/inbounds/addClient" \
+            -H "Content-Type: application/json" -H "X-Requested-With: XMLHttpRequest" -H "X-CSRF-Token: $csrf" \
+            -d "{\"id\":$ID_VISION,\"settings\":\"{\\\"clients\\\":[${csv2}]}\"}")
+
+        if echo "$RESP1" | python3 -c "import sys,json; sys.exit(0 if json.load(sys.stdin).get('success') else 1)" 2>/dev/null; then
+            echo -e "${G}[OK]${N} Client added to XHTTP backend"
+        else
+            echo -e "${R}[ERROR]${N} Failed"
+        fi
+        if echo "$RESP2" | python3 -c "import sys,json; sys.exit(0 if json.load(sys.stdin).get('success') else 1)" 2>/dev/null; then
+            echo -e "${G}[OK]${N} Client added to Vision frontend"
+        else
+            echo -e "${R}[ERROR]${N} Failed"
+        fi
+
+        echo ""
+        echo -e "${G}╔══════════════════════════════════════╗${N}"
+        echo -e "${G}║     ${B}Client Added${N}${G}                  ║${N}"
+        echo -e "${G}╚══════════════════════════════════════╝${N}"
+        echo ""
+        echo -e "${B}Subscription link:${N}"
+        SUB_PATH=$(sqlite3 /opt/serv/3x-ui/db/x-ui.db "SELECT value FROM settings WHERE key='subPath' LIMIT 1;" 2>/dev/null || echo "/sub/")
+        echo -e "  ${C}Single:${N} https://${C}${DOMAIN}${N}${SUB_PATH}${SID}"
+        echo ""
+        echo -e "${B}UUID:${N} ${C}$CID${N}"
+        echo ""
+
+        # Regenerate subscription cache
+        csrf=$(csrf_token)
+        curl -s --max-time 5 -b "$COOKIE_FILE" -X POST "http://127.0.0.1:2053/admin-vkl8/panel/api/inbounds/update/3" \
+            -H "Content-Type: application/json" -H "X-Requested-With: XMLHttpRequest" -H "X-CSRF-Token: $csrf" \
+            -d '{}' > /dev/null 2>&1 || true
+    fi
+
+    rm "$COOKIE_FILE"
+}
+
+show_help() {
+    echo -e "${B}Usage:${N} $0 [command]"
+    echo ""
+    echo "Commands:"
+    echo -e "  (no args)    ${C}Full installation${N}  — setup everything from scratch"
+    echo -e "  ${C}add-client${N}   ${Y}Add new client${N}      — add client(s) to existing installation"
+    echo -e "  ${C}help${N}         ${Y}Show help${N}"
+    echo ""
+    echo -e "${B}Examples:${N}"
+    echo -e "  $0                  # Full install"
+    echo -e "  $0 add-client       # Add new client"
+    echo ""
+}
+
+# ─── CLI dispatch ──────────────────────────────────────────────────────────────
+case "${1:-install}" in
+    help|--help|-h)
+        show_help
+        exit 0
+        ;;
+    add-client)
+        add_client
+        exit 0
+        ;;
+    install)
+        ;;  # continue below
+    *)
+        echo -e "${R}[ERROR]${N} Unknown command: $1"
+        show_help
+        exit 1
+        ;;
+esac
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# FULL INSTALLATION
+# ═══════════════════════════════════════════════════════════════════════════════
+
+print_banner
 
 read -p "Domain (e.g. mydomain.com): " DOMAIN
 if ! echo "$DOMAIN" | grep -qE '^[a-zA-Z0-9]([a-zA-Z0-9.-]*[a-zA-Z0-9])?\.[a-zA-Z]{2,}$'; then
-    echo "Error: Invalid domain format"
+    echo -e "${R}[ERROR]${N} Invalid domain format"
     exit 1
 fi
 
 echo ""
-echo "--- 3x-ui Panel Credentials ---"
+echo -e "${Y}--- 3x-ui Panel Credentials ---${N}"
 read -p "3x-ui Username (default: admin): " XUI_USER
 XUI_USER=${XUI_USER:-admin}
 read -s -p "3x-ui Password (default: admin): " XUI_PASS
 echo ""
 XUI_PASS=${XUI_PASS:-admin}
-echo "-------------------------------"
+echo -e "${Y}-------------------------------${N}"
 echo ""
 
-echo "--- Client Configuration ---"
+echo -e "${Y}--- Client Configuration ---${N}"
 echo "How to handle client IDs for the two inbounds (XHTTP backend + Vision frontend):"
 echo ""
 echo "  1) Single ID (UUID) for both inbounds"
@@ -64,59 +334,59 @@ else
     SUB_ID=$(head -c 16 /dev/urandom | md5sum | head -c 16)
 fi
 
-echo "=== Configuration Summary ==="
-echo "Domain:      $DOMAIN"
-echo "Admin path:  /$ADMIN_PATH/"
-echo "Sub path:    /$SUB_PATH/"
-echo "XHTTP path:  /$XHTTP_PATH/"
+echo -e "${G}=== Configuration Summary ===${N}"
+echo -e "${Y}Domain:${N}      ${C}$DOMAIN${N}"
+echo -e "${Y}Admin path:${N}  /$ADMIN_PATH/"
+echo -e "${Y}Sub path:${N}    /$SUB_PATH/"
+echo -e "${Y}XHTTP path:${N}  /$XHTTP_PATH/"
 if [ "$UUID_MODE" = "2" ]; then
-    echo "XHTTP UUID:  $CLIENT_ID"
-    echo "Vision UUID: $CLIENT_ID_VISION"
+    echo -e "${Y}XHTTP UUID:${N}  ${C}$CLIENT_ID${N}"
+    echo -e "${Y}Vision UUID:${N} ${C}$CLIENT_ID_VISION${N}"
 fi
-echo "Client UUID: $CLIENT_ID"
+echo -e "${Y}Client UUID:${N} ${C}$CLIENT_ID${N}"
 echo ""
 
-echo "[1/8] Preparing directories and Lampac password..."
+echo -e "${G}[1/8]${N} Preparing directories and Lampac password..."
 mkdir -p "$SERVER_DIR/lampac/config"
 mkdir -p "$SERVER_DIR/3x-ui/db"
 mkdir -p "$SERVER_DIR/caddy/data"
 printf '%s' "$LAMJac_PASSWORD" > "$SERVER_DIR/lampac/config/passwd"
-echo "  Done"
+echo -e "  ${G}Done${N}"
 
-echo "[2/8] Enabling BBR..."
+echo -e "${G}[2/8]${N} Enabling BBR..."
 if ! grep -q "net.core.default_qdisc=fq" /etc/sysctl.conf; then
     echo "net.core.default_qdisc=fq" | tee -a /etc/sysctl.conf
     echo "net.ipv4.tcp_congestion_control=bbr" | tee -a /etc/sysctl.conf
     sysctl -p >/dev/null 2>&1
 fi
-echo "  BBR enabled"
+echo -e "  ${G}BBR enabled${N}"
 
-echo "[3/8] Generating Caddyfile from template..."
+echo -e "${G}[3/8]${N} Generating Caddyfile from template..."
 if [ ! -f "$SERVER_DIR/Caddyfile.template" ]; then
-    echo "Error: Caddyfile.template not found"
+    echo -e "${R}[ERROR]${N} Caddyfile.template not found"
     exit 1
 fi
 cp "$SERVER_DIR/Caddyfile.template" "$SERVER_DIR/Caddyfile"
 sed -i "s|\$DOMAIN|$DOMAIN|g" "$SERVER_DIR/Caddyfile"
 sed -i "s|\$ADMIN_PATH|$ADMIN_PATH|g" "$SERVER_DIR/Caddyfile"
 sed -i "s|\$SUB_PATH|$SUB_PATH|g" "$SERVER_DIR/Caddyfile"
-echo "  Domain and paths updated"
+echo -e "  ${G}Domain and paths updated${N}"
 
-echo "[4/8] Generating Caddy bcrypt hash..."
+echo -e "${G}[4/8]${N} Generating Caddy bcrypt hash..."
 read -s -p "Enter password for web basic_auth: " WEB_PASSWORD
 echo ""
 if ! command -v docker &> /dev/null; then
-    echo "Error: Docker not found. Install Docker first."
+    echo -e "${R}[ERROR]${N} Docker not found. Install Docker first."
     exit 1
 fi
 BCRYPT_HASH=$(docker run --rm -i caddy caddy hash-password <<< "$WEB_PASSWORD" 2>/dev/null) || {
-    echo "Error: Failed to generate bcrypt hash"
+    echo -e "${R}[ERROR]${N} Failed to generate bcrypt hash"
     exit 1
 }
 sed -i "s|\$WEB_PASSWORD_HASH|$BCRYPT_HASH|g" "$SERVER_DIR/Caddyfile"
-echo "  Caddy bcrypt hash updated"
+echo -e "  ${G}Caddy bcrypt hash updated${N}"
 
-echo "[5/8] Configuring firewall..."
+echo -e "${G}[5/8]${N} Configuring firewall..."
 iptables -P INPUT ACCEPT
 iptables -F
 iptables -A INPUT -m state --state RELATED,ESTABLISHED -j ACCEPT
@@ -126,13 +396,13 @@ iptables -A INPUT -p tcp --dport 443 -j ACCEPT
 iptables -A INPUT -p udp --dport 443 -j ACCEPT
 iptables -A INPUT -i lo -j ACCEPT
 iptables -P INPUT DROP
-echo "  Firewall configured (basic rules)"
+echo -e "  ${G}Firewall configured${N}"
 
-echo "[6/8] Starting services..."
+echo -e "${G}[6/8]${N} Starting services..."
 cd "$SERVER_DIR" && docker compose down && docker compose up -d
-echo "  Services started"
+echo -e "  ${G}Services started${N}"
 
-echo "[7/8] Configuring 3x-ui Inbounds via API..."
+echo -e "${G}[7/8]${N} Configuring 3x-ui Inbounds via API..."
 echo "  Waiting for 3x-ui to be ready (max 60s)..."
 MAX_RETRIES=30
 RETRY_COUNT=0
@@ -140,49 +410,24 @@ until curl -s -o /dev/null -w "%{http_code}" http://127.0.0.1:2053/csrf-token | 
     sleep 2
     RETRY_COUNT=$((RETRY_COUNT+1))
     if [ $RETRY_COUNT -ge $MAX_RETRIES ]; then
-        echo "Error: 3x-ui failed to start in time"
+        echo -e "${R}[ERROR]${N} 3x-ui failed to start in time"
         exit 1
     fi
 done
 
 COOKIE_FILE=$(mktemp)
 
-# Helper: extract CSRF token from GET /csrf-token (also updates session cookie)
-csrf_token() {
-    curl -s --max-time 5 -b "$COOKIE_FILE" -c "$COOKIE_FILE" http://127.0.0.1:2053/csrf-token \
-        | python3 -c "import sys,json; print(json.load(sys.stdin)['obj'])"
-}
-
-# Helper: POST JSON to 3x-ui API with CSRF + session cookie
-xui_json() {
-    local url="$1" json="$2"
-    local token
-    token=$(csrf_token)
-    curl -s --max-time 10 -b "$COOKIE_FILE" -c "$COOKIE_FILE" -X POST "$url" \
-        -H "Content-Type: application/json" \
-        -H "X-Requested-With: XMLHttpRequest" \
-        -H "X-CSRF-Token: $token" \
-        -d "$json"
-}
-
 echo "  Getting CSRF token..."
 CSRF_TOKEN=$(csrf_token)
 if [ -z "$CSRF_TOKEN" ]; then
-    echo "Error: Failed to get CSRF token"
+    echo -e "${R}[ERROR]${N} Failed to get CSRF token"
     rm "$COOKIE_FILE"
     exit 1
 fi
 
 echo "  Logging in with default credentials (admin/admin)..."
-LOGIN_RESP=$(curl -s --max-time 10 -b "$COOKIE_FILE" -c "$COOKIE_FILE" \
-    -X POST "http://127.0.0.1:2053/login" \
-    -H "Content-Type: application/x-www-form-urlencoded; charset=UTF-8" \
-    -H "X-Requested-With: XMLHttpRequest" \
-    -H "X-CSRF-Token: $CSRF_TOKEN" \
-    -d "username=admin&password=admin")
-
-if ! echo "$LOGIN_RESP" | python3 -c "import sys,json; sys.exit(0 if json.load(sys.stdin).get('success') else 1)" 2>/dev/null; then
-    echo "Error: 3x-ui login failed. Check if the panel is running with default credentials (admin/admin)."
+if ! xui_login "admin" "admin"; then
+    echo -e "${R}[ERROR]${N} 3x-ui login failed. Check if the panel is running with default credentials (admin/admin)."
     rm "$COOKIE_FILE"
     exit 1
 fi
@@ -199,7 +444,7 @@ XHTTP_RESP=$(xui_json "http://127.0.0.1:2053/panel/api/inbounds/add" '{
   "allocate": "{\"strategy\":\"always\",\"refresh\":5,\"concurrency\":3}"
 }') || true
 if ! echo "$XHTTP_RESP" | python3 -c "import sys,json; sys.exit(0 if json.load(sys.stdin).get('success') else 1)" 2>/dev/null; then
-    echo "Warning: XHTTP Backend creation failed (may already exist)"
+    echo -e "${Y}Warning:${N} XHTTP Backend creation failed (may already exist)"
 fi
 
 # 2. Add XTLS-Vision Frontend (Port 443)
@@ -215,7 +460,7 @@ FRONTEND_RESP=$(xui_json "http://127.0.0.1:2053/panel/api/inbounds/add" '{
   "allocate": "{\"strategy\":\"always\",\"refresh\":5,\"concurrency\":3}"
 }') || true
 if ! echo "$FRONTEND_RESP" | python3 -c "import sys,json; sys.exit(0 if json.load(sys.stdin).get('success') else 1)" 2>/dev/null; then
-    echo "Warning: Frontend inbound creation failed (certs may not be ready yet)"
+    echo -e "${Y}Warning:${N} Frontend inbound creation failed (certs may not be ready yet)"
 fi
 
 # 3. Update 3x-ui credentials to user-provided values (if different from defaults)
@@ -224,9 +469,9 @@ if [ "$XUI_USER" != "admin" ] || [ "$XUI_PASS" != "admin" ]; then
     CRED_RESP=$(xui_json "http://127.0.0.1:2053/panel/setting/updateUser" \
         '{"oldUsername":"admin","oldPassword":"admin","newUsername":"'"$XUI_USER"'","newPassword":"'"$XUI_PASS"'"}')
     if echo "$CRED_RESP" | python3 -c "import sys,json; sys.exit(0 if json.load(sys.stdin).get('success') else 1)" 2>/dev/null; then
-        echo "  Credentials updated"
+        echo -e "  ${G}Credentials updated${N}"
     else
-        echo "Warning: Failed to update credentials"
+        echo -e "${Y}Warning:${N} Failed to update credentials"
     fi
 fi
 
@@ -245,9 +490,9 @@ print(json.dumps(obj))
 ")
 SETTINGS_RESP=$(xui_json "http://127.0.0.1:2053/panel/setting/update" "$UPDATED_SETTINGS")
 if echo "$SETTINGS_RESP" | python3 -c "import sys,json; sys.exit(0 if json.load(sys.stdin).get('success') else 1)" 2>/dev/null; then
-    echo "  Panel and subscription configured"
+    echo -e "  ${G}Panel and subscription configured${N}"
 else
-    echo "Warning: Failed to configure panel settings"
+    echo -e "${Y}Warning:${N} Failed to configure panel settings"
 fi
 
 # 5. Restart panel to apply settings
@@ -261,36 +506,8 @@ curl -s --max-time 10 -b "$COOKIE_FILE" -c "$COOKIE_FILE" -X POST "http://127.0.
 sleep 3
 
 rm "$COOKIE_FILE"
-echo "  Inbounds and subscription configured via API"
+echo -e "  ${G}Inbounds and subscription configured via API${N}"
 
-echo "[8/8] Done."
-echo ""
-echo "=== Setup Complete ==="
-echo "URLs:"
-echo "  Panel:  https://$DOMAIN/$ADMIN_PATH/"
-echo ""
-echo "Subscription links:"
-if [ "$UUID_MODE" = "2" ]; then
-    echo "  XHTTP:  https://$DOMAIN/$SUB_PATH/$SUB_ID"
-    echo "  Vision: https://$DOMAIN/$SUB_PATH/${SUB_ID_VISION}"
-else
-    echo "  Single: https://$DOMAIN/$SUB_PATH/$SUB_ID"
-fi
-echo ""
-echo "Credentials:"
-echo "  Web Auth: admin / [your password]"
-echo "  3x-ui:    $XUI_USER / $XUI_PASS"
-if [ "$UUID_MODE" = "2" ]; then
-    echo "  XHTTP UUID:  $CLIENT_ID"
-    echo "  Vision UUID: $CLIENT_ID_VISION"
-    echo "  XHTTP SubID: $SUB_ID"
-    echo "  Vision SubID: $SUB_ID_VISION"
-else
-    echo "  UUID:     $CLIENT_ID"
-    echo "  Sub ID:   $SUB_ID"
-fi
-echo "  XHTTP:    /$XHTTP_PATH/"
-echo "  Lampac:   $LAMJac_PASSWORD"
-echo ""
-echo "Note: Certificates might take a minute to generate. If the 443 port"
-echo "is not working immediately, wait a bit and restart 3x-ui."
+echo -e "${G}[8/8] Done.${N}"
+
+print_summary
