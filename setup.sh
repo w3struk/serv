@@ -252,17 +252,103 @@ except: pass
     rm "$COOKIE_FILE"
 }
 
+show_status() {
+    print_banner
+    echo -e "${B}Docker Containers:${N}"
+    local names="caddy lampac 3xui_app"
+    for n in $names; do
+        if docker ps --format "{{.Names}}" 2>/dev/null | grep -q "^$n$"; then
+            echo -e "  ${G}✅${N} $n  $(docker ps --filter name=$n --format '{{.Status}}')"
+        else
+            echo -e "  ${R}❌${N} $n  not running"
+        fi
+    done
+    echo ""
+
+    local DOMAIN=""
+    local ADMIN_PATH=""
+    local SUB_PATH=""
+    local XHTTP_PATH=""
+
+    # Read config from Caddyfile
+    if [ -f "$SERVER_DIR/Caddyfile" ]; then
+        ADMIN_PATH=$(grep -oP 'handle /admin-\w+' "$SERVER_DIR/Caddyfile" | head -1 | sed 's/handle \///')
+        SUB_PATH=$(grep -oP 'handle /sub-\w+' "$SERVER_DIR/Caddyfile" | head -1 | sed 's/handle \///')
+        DOMAIN=$(sed -n '/redir/p' "$SERVER_DIR/Caddyfile" | grep -oP 'https://\K[^{}]+' | head -1 | sed 's/{uri} permanent//')
+    fi
+
+    if [ -n "$DOMAIN" ]; then
+        echo -e "${B}Domain:${N} ${C}$DOMAIN${N}"
+        echo ""
+        echo -e "${B}URLs:${N}"
+        [ -n "$ADMIN_PATH" ] && echo -e "  ${C}Panel:${N} https://$DOMAIN/$ADMIN_PATH/"
+        [ -n "$SUB_PATH" ]   && echo -e "  ${C}Sub:${N}   https://$DOMAIN/$SUB_PATH/"
+    fi
+
+    echo ""
+    echo -e "${B}Inbounds & Clients:${N}"
+    if docker exec 3xui_app cat bin/config.json 2>/dev/null | python3 -c "
+import sys, json
+c = json.load(sys.stdin)
+found = False
+for i in c.get('inbounds', []):
+    t = i.get('tag', '')
+    if 'api' in t: continue
+    port = i.get('port', '')
+    net = i.get('streamSettings', {}).get('network', 'tcp')
+    sec = i.get('streamSettings', {}).get('security', 'none')
+    settings = i.get('settings', {})
+    if isinstance(settings, str):
+        try: import json; settings = json.loads(settings)
+        except: settings = {}
+    clients = settings.get('clients', [])
+    count = len(clients)
+    remark = i.get('remark', t)
+    print(f'  {remark} ({port}, {net}, {sec}) - {count} client(s)')
+    for cl in clients:
+        uid = cl.get('id', '')[:8]
+        sub = cl.get('subId', '')
+        flow = cl.get('flow', '')
+        email = cl.get('email', '')
+        fstr = f' flow={flow}' if flow else ''
+        estr = f' email={email}' if email else ''
+        print(f'    └ {uid}... sub={sub}{fstr}{estr}')
+    found = True
+if not found:
+    print('  (none)')
+" 2>/dev/null; then
+        :  # success
+    else
+        echo -e "  ${R}cannot read config${N}"
+    fi
+
+    echo ""
+    sqlite3 /opt/serv/3x-ui/db/x-ui.db 2>/dev/null <<<".exit" && {
+        echo -e "${B}Settings:${N}"
+        local subPath subURI webBase
+        subPath=$(sqlite3 /opt/serv/3x-ui/db/x-ui.db "SELECT value FROM settings WHERE key='subPath' LIMIT 1;" 2>/dev/null || echo "—")
+        subURI=$(sqlite3 /opt/serv/3x-ui/db/x-ui.db "SELECT value FROM settings WHERE key='subURI' LIMIT 1;" 2>/dev/null || echo "—")
+        webBase=$(sqlite3 /opt/serv/3x-ui/db/x-ui.db "SELECT value FROM settings WHERE key='webBasePath' LIMIT 1;" 2>/dev/null || echo "—")
+        echo -e "  ${Y}Sub Path:${N}     $subPath"
+        echo -e "  ${Y}Sub URI:${N}      $subURI"
+        echo -e "  ${Y}Web Base Path:${N} $webBase"
+    } 2>/dev/null || true
+    echo ""
+}
+
 show_help() {
     echo -e "${B}Usage:${N} $0 [command]"
     echo ""
     echo "Commands:"
     echo -e "  (no args)    ${C}Full installation${N}  — setup everything from scratch"
     echo -e "  ${C}add-client${N}   ${Y}Add new client${N}      — add client(s) to existing installation"
+    echo -e "  ${C}status${N}       ${Y}Show status${N}         — display current configuration"
     echo -e "  ${C}help${N}         ${Y}Show help${N}"
     echo ""
     echo -e "${B}Examples:${N}"
     echo -e "  $0                  # Full install"
     echo -e "  $0 add-client       # Add new client"
+    echo -e "  $0 status           # Show status"
     echo ""
 }
 
@@ -274,6 +360,14 @@ case "${1:-install}" in
         ;;
     add-client)
         add_client
+        exit 0
+        ;;
+    status)
+        check_installed || {
+            echo -e "${R}[ERROR]${N} Installation not found."
+            exit 1
+        }
+        show_status
         exit 0
         ;;
     install)
