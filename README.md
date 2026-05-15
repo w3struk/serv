@@ -1,6 +1,5 @@
 # 3x-ui + Caddy + VLESS + XHTTP + TLS — полная схема проксирования
 
-
 ## Настройка сервера
 
 ### Подготовка
@@ -73,38 +72,36 @@ sudo usermod -aG docker $USER
 newgrp docker
 ```
 
-### Проверка
-
-```bash
-docker run hello-world
-```
-</details>
-
 ### Развёртывание
 
 ```bash
 cd /opt && git clone https://github.com/w3struk/serv && cd /serv
-./setup.sh
-```
 
-Скрипт интерактивно запросит **домен**.
+./setup.sh
+./setup.sh add-client
+./setup.sh status
+./setup.sh help
+```
 
 Скрипт автоматически:
 - Генерирует пароль для Lampac
-- Включает BBR
 - Генерирует случайные пути для панели и подписки
 - Обновляет Caddyfile (домен, пути, bcrypt хэш)
-- Настраивает firewall (iptables)
 - Запускает контейнеры
 
 > [!NOTE]
 > Скрипт запускается от root, так как настраивает BBR и firewall.
 
-### Первый вход в панель
+## Полезное
 
-1. Откройте URL из вывода скрипта (обязательно со слэшем на конце)
-2. Basic Auth (от Caddy): логин `admin`, ваш пароль
-3. Страница входа 3x-ui: логин `admin`, пароль `admin`
+```bash
+docker compose down && docker compose up -d && docker compose logs -f # start, stop, logs
+docker compose down 3xui && docker pull ghcr.io/mhsanaei/3x-ui:latest && docker compose up -d 3xui #update 3x-ui
+docker ps #список контейнеров
+docker system prune -a  # clear all data
+docker volume ls
+docker exec -it lampac bash
+```
 
 ## Благодарности
 
@@ -112,16 +109,3 @@ cd /opt && git clone https://github.com/w3struk/serv && cd /serv
 - [MHSanaei](https://github.com/MHSanaei/3x-ui) — 3x-ui
 - [Lampac NextGen](https://github.com/lampac-nextgen/lampac)
 - https://eikeidev.github.io/vless-xtls-converter/
-
-## полезное
-
-```bash
-docker ps #список контейнеров
-docker compose up -d    # start
-docker compose down     # stop
-docker compose logs -f  # logs
-docker system prune -a  # clear all data
-docker volume ls
-docker exec -it lampac bash
-docker compose down && docker compose up -d && docker compose logs -f
-```
