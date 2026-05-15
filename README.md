@@ -71,6 +71,7 @@ bash <(wget -qO- https://get.docker.com)
 sudo usermod -aG docker $USER
 newgrp docker
 ```
+</details>
 
 ### Развёртывание
 
