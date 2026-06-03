@@ -120,19 +120,6 @@ cd /opt && git clone https://github.com/w3struk/serv && cd /serv
 └────────────────────────────────────────┘
 ```
 
-### Цепочка обработки реального IP-адреса клиента
-
-1. **Клиент → 3x-ui Vision (TLS :443):** прямой TCP, source IP сохраняется.
-2. **Vision fallback → Caddy (`@caddy_fallback`):** Xray отправляет PROXY v2 header с реальным IP клиента (т.к. `xver: 2`); Caddy принимает через `listener_wrappers { proxy_protocol }`, `remote` = реальный IP.
-3. **Caddy → XHTTP (`@uds_xhttp`):** Caddy **prepends** PROXY v2 header на исходящее UDS-соединение (через `transport http { proxy_protocol v2 }`).
-4. **XHTTP Backend:** слушает UDS через `proxyproto.Listener(Policy: REQUIRE)`. Принимает PROXY v2 и устанавливает `net.Conn.RemoteAddr()` = реальный IP клиента. Параметр `sockopt.acceptProxyProtocol: true` активирует эту обёртку на уровне системного слушателя.
-5. **Преимущества PROXY v2 над X-Forwarded-For:**
-   - Не нужен `trustedXForwardedFor` (нет путаницы header name vs IP).
-   - Не срабатывает `SECURITY WARNING: ... THIS IS VERY INSECURE!!!`.
-   - Клиент не может подделать IP — PROXY v2 вставляется только Caddy'ом.
-   - Реальный IP доступен на уровне соединения, а не через парсинг HTTP-заголовка.
-6. **3x-ui лог (`/var/log/x-ui/3xipl.log`):** содержит реальный IP клиента, что позволяет корректно работать fail2ban.
-
 ## Управление и Полезные команды
 
 Скрипт `setup.sh` предоставляет несколько встроенных команд:
