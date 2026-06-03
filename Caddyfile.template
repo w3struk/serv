@@ -1,0 +1,65 @@
+{
+    auto_https disable_redirects
+
+    servers unix/@caddy_fallback {
+        listener_wrappers {
+            proxy_protocol {
+                timeout 2s
+            }
+        }
+    }
+
+    servers {
+        trusted_proxies static 127.0.0.1/32
+    }
+}
+
+http://:80 {
+    bind 0.0.0.0
+    redir https://$DOMAIN{uri} permanent
+}
+
+:8080 {
+    bind unix/@caddy_fallback
+    encode gzip zstd
+
+    handle /$ADMIN_PATH/* {
+        basic_auth {
+            admin $WEB_PASSWORD_HASH
+        }
+        reverse_proxy 127.0.0.1:2053
+    }
+
+    handle /assets/* {
+        rewrite * /$ADMIN_PATH{path}
+        reverse_proxy 127.0.0.1:2053
+    }
+
+    handle /$SUB_PATH/* {
+        reverse_proxy 127.0.0.1:2096
+    }
+
+    handle /$XHTTP_PATH/* {
+        reverse_proxy unix/@uds_xhttp {
+            flush_interval -1
+            transport http {
+                versions h2c 2
+                proxy_protocol v2
+            }
+        }
+    }
+
+    handle {
+        reverse_proxy https://mirrors.edge.kernel.org {
+            header_up Host mirrors.edge.kernel.org
+        }
+    }
+
+    header {
+        Strict-Transport-Security "max-age=31536000; includeSubDomains; preload"
+        X-Content-Type-Options nosniff
+        X-Frame-Options SAMEORIGIN
+        -Server
+        -X-Powered-By
+    }
+}
