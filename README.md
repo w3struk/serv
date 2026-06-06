@@ -76,7 +76,7 @@ newgrp docker
 Скрипт полностью интерактивный. При запуске он запросит домен, предпочтительные логин/пароль для панели и режим работы с подписками.
 
 ```bash
-cd /opt && git clone https://github.com/w3struk/serv && cd /serv
+cd /opt && git clone --recurse-submodules https://github.com/w3struk/serv && cd serv
 
 ./setup.sh
 ```
@@ -136,8 +136,10 @@ cd /opt && git clone https://github.com/w3struk/serv && cd /serv
 # Перезапуск всех сервисов и просмотр логов
 docker compose down && docker compose up -d && docker compose logs -f
 
-# Обновление 3x-ui до последней версии
-docker compose down 3xui && docker pull ghcr.io/mhsanaei/3x-ui:latest && docker compose up -d 3xui
+# Получение закреплённой версии исходников 3x-ui и образа из форка
+git submodule update --init --recursive
+docker compose pull 3xui
+docker compose up -d 3xui
 
 docker ps               # список контейнеров
 docker system prune -a  # очистка всех неиспользуемых данных Docker
