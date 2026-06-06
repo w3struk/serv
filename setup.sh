@@ -51,6 +51,71 @@ xui_login() {
     echo "$resp" | python3 -c "import sys,json; sys.exit(0 if json.load(sys.stdin).get('success') else 1)" 2>/dev/null
 }
 
+build_xhttp_payload() {
+    python3 - "$1" "$2" "$3" "$4" "$5" <<'PY'
+import json
+import sys
+
+client_id, sub_id, domain, xhttp_path, advanced_obfs = sys.argv[1:]
+
+xhttp_settings = {
+    "path": f"/{xhttp_path}",
+    "mode": "auto",
+    "headers": {"User-Agent": "!chrome"},
+}
+if advanced_obfs == "true":
+    xhttp_settings.update({
+        "xPaddingObfsMode": True,
+        "xPaddingBytes": "100-1000",
+        "xPaddingKey": "trace",
+        "xPaddingHeader": "X-Trace-ID",
+        "xPaddingPlacement": "queryInHeader",
+        "xPaddingMethod": "tokenish",
+    })
+
+payload = {
+    "up": 0,
+    "down": 0,
+    "total": 0,
+    "remark": "VLESS-XHTTP-Backend",
+    "enable": True,
+    "expiryTime": 0,
+    "listen": "@uds_xhttp",
+    "port": 2023,
+    "protocol": "vless",
+    "settings": json.dumps({
+        "clients": [{"id": client_id, "subId": sub_id}],
+        "decryption": "none",
+        "fallbacks": [],
+    }, separators=(",", ":")),
+    "streamSettings": json.dumps({
+        "network": "xhttp",
+        "security": "none",
+        "sockopt": {"acceptProxyProtocol": True},
+        "externalProxy": [{
+            "dest": domain,
+            "port": 443,
+            "forceTls": "tls",
+            "remark": "",
+        }],
+        "xhttpSettings": xhttp_settings,
+        "finalmask": {},
+    }, separators=(",", ":")),
+    "sniffing": json.dumps({
+        "enabled": True,
+        "destOverride": ["http", "tls"],
+        "routeOnly": True,
+    }, separators=(",", ":")),
+    "allocate": json.dumps({
+        "strategy": "always",
+        "refresh": 5,
+        "concurrency": 3,
+    }, separators=(",", ":")),
+}
+print(json.dumps(payload, separators=(",", ":")))
+PY
+}
+
 # Check if docker services are running
 check_installed() {
     docker compose ls --filter "name=serv" 2>/dev/null | grep -q "serv" && return 0
@@ -377,6 +442,13 @@ read -p "Choose (default: 1): " UUID_MODE
 UUID_MODE=${UUID_MODE:-1}
 echo ""
 
+read -p "Enable advanced XHTTP padding obfuscation? [y/N]: " XHTTP_OBFS_CHOICE
+case "${XHTTP_OBFS_CHOICE:-n}" in
+    y|Y|yes|YES|Yes) XHTTP_ADVANCED_OBFS=true ;;
+    *) XHTTP_ADVANCED_OBFS=false ;;
+esac
+echo ""
+
 ADMIN_PATH="admin-$(head -c 8 /dev/urandom | base64 | tr -dc 'a-z0-9' | head -c 8)"
 SUB_PATH="sub-$(head -c 8 /dev/urandom | base64 | tr -dc 'a-z0-9' | head -c 8)"
 XHTTP_PATH="api/v$(shuf -i 1-999 -n 1)"
@@ -397,6 +469,7 @@ echo -e "${Y}Sub path:${N}    /$SUB_PATH/"
 echo -e "${Y}XHTTP path:${N}  /$XHTTP_PATH/"
 echo -e "${Y}XHTTP UUID:${N}  ${C}$CLIENT_ID${N}"
 echo -e "${Y}Vision UUID:${N} ${C}$CLIENT_ID_VISION${N}"
+echo -e "${Y}Advanced XHTTP padding:${N} $XHTTP_ADVANCED_OBFS"
 echo ""
 
 echo -e "${G}[1/8]${N} Preparing directories..."
@@ -485,15 +558,8 @@ fi
 
 # 1. Add XHTTP Backend (Port 2023)
 echo "  Adding XHTTP Backend inbound..."
-XHTTP_RESP=$(xui_json "http://127.0.0.1:2053/panel/api/inbounds/add" '{
-  "up": 0, "down": 0, "total": 0,
-  "remark": "VLESS-XHTTP-Backend", "enable": true, "expiryTime": 0,
-  "listen": "@uds_xhttp", "port": 2023, "protocol": "vless",
-  "settings": "{\"clients\":[{\"id\":\"'"$CLIENT_ID"'\",\"subId\":\"'"$SUB_ID"'\"}],\"decryption\":\"none\",\"fallbacks\":[]}",
-  "streamSettings": "{\"network\":\"xhttp\",\"security\":\"none\",\"sockopt\":{\"acceptProxyProtocol\":true},\"externalProxy\":[{\"dest\":\"'"$DOMAIN"'\",\"port\":443,\"forceTls\":\"tls\",\"remark\":\"\"}],\"xhttpSettings\":{\"path\":\"'"/$XHTTP_PATH"'\",\"mode\":\"auto\",\"headers\":{\"User-Agent\":\"!chrome\"},\"xPaddingObfsMode\":true,\"xPaddingBytes\":\"100-1000\",\"xPaddingKey\":\"trace\",\"xPaddingHeader\":\"X-Trace-ID\",\"xPaddingPlacement\":\"queryInHeader\",\"xPaddingMethod\":\"tokenish\",\"scMaxEachPostBytes\":\"1000000\",\"xmux\":{\"maxConcurrency\":\"6-12\",\"maxConnections\":0,\"cMaxReuseTimes\":0,\"hMaxRequestTimes\":\"600-900\",\"hMaxReusableSecs\":\"1800-3000\",\"hKeepAlivePeriod\":0}},\"finalmask\":{}}",
-  "sniffing": "{\"enabled\":true,\"destOverride\":[\"http\",\"tls\"],\"routeOnly\":true}",
-  "allocate": "{\"strategy\":\"always\",\"refresh\":5,\"concurrency\":3}"
-}') || true
+XHTTP_PAYLOAD=$(build_xhttp_payload "$CLIENT_ID" "$SUB_ID" "$DOMAIN" "$XHTTP_PATH" "$XHTTP_ADVANCED_OBFS")
+XHTTP_RESP=$(xui_json "http://127.0.0.1:2053/panel/api/inbounds/add" "$XHTTP_PAYLOAD") || true
 if ! echo "$XHTTP_RESP" | python3 -c "import sys,json; sys.exit(0 if json.load(sys.stdin).get('success') else 1)" 2>/dev/null; then
     echo -e "${Y}Warning:${N} XHTTP Backend creation failed (may already exist)"
 fi
