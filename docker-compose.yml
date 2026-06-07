@@ -9,7 +9,7 @@ services:
             - ./Caddyfile:/etc/caddy/Caddyfile
 
     3xui:
-        image: ghcr.io/w3struk/3x-ui:v3.2.8-xhttp-padding.1
+        image: ghcr.io/w3struk/3x-ui:v3.2.8-xhttp-padding.1@sha256:91b01946a36cd142a39d9aae21eed954d7ccba5905e581a3237ea6626ed4cf7b
         container_name: 3xui_app
         restart: unless-stopped
         network_mode: host
