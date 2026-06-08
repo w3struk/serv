@@ -52,11 +52,11 @@ xui_login() {
 }
 
 build_xhttp_payload() {
-    python3 - "$1" "$2" "$3" "$4" "$5" <<'PY'
+    python3 - "$1" "$2" "$3" <<'PY'
 import json
 import sys
 
-client_id, sub_id, domain, xhttp_path, advanced_obfs = sys.argv[1:]
+domain, xhttp_path, advanced_obfs = sys.argv[1:]
 
 xhttp_settings = {
     "path": f"/{xhttp_path}",
@@ -84,7 +84,7 @@ payload = {
     "port": 2023,
     "protocol": "vless",
     "settings": json.dumps({
-        "clients": [{"id": client_id, "subId": sub_id}],
+        "clients": [],
         "decryption": "none",
         "fallbacks": [],
     }, separators=(",", ":")),
@@ -113,6 +113,31 @@ payload = {
     }, separators=(",", ":")),
 }
 print(json.dumps(payload, separators=(",", ":")))
+PY
+}
+
+build_client_payload() {
+    python3 - "$1" "$2" "$3" "$4" "$5" <<'PY'
+import json
+import sys
+
+email, client_id, sub_id, flow, inbound_ids = sys.argv[1:]
+client = {
+    "email": email,
+    "id": client_id,
+    "subId": sub_id,
+    "enable": True,
+    "limitIp": 0,
+    "totalGB": 0,
+    "expiryTime": 0,
+    "tgId": 0,
+}
+if flow:
+    client["flow"] = flow
+print(json.dumps({
+    "client": client,
+    "inboundIds": [int(value) for value in inbound_ids.split(",")],
+}, separators=(",", ":")))
 PY
 }
 
@@ -199,7 +224,7 @@ add_client() {
 
     echo ""
     echo "Subscription Configuration:"
-    echo "  1) Different UUIDs, one subscription link (both configs under one link)"
+    echo "  1) One UUID and one subscription link (both configs under one link)"
     echo "  2) Different UUIDs, separate subscription links (each its own link)"
     read -p "Choose (default: 1): " UUID_MODE
     UUID_MODE=${UUID_MODE:-1}
@@ -222,18 +247,12 @@ add_client() {
         echo "$(tr -dc 'a-z0-9' < /dev/urandom | head -c 8)@$(tr -dc 'a-z0-9' < /dev/urandom | head -c 4).com"
     }
 
-    add_client_to_inbound() {
-        local id="$1" cid="$2" sid="$3" email="$4" flow="$5"
-        local csv="{\\\"id\\\":\\\"$cid\\\",\\\"email\\\":\\\"$email\\\",\\\"subId\\\":\\\"$sid\\\"}"
-        [ -n "$flow" ] && csv="{\\\"id\\\":\\\"$cid\\\",\\\"flow\\\":\\\"$flow\\\",\\\"email\\\":\\\"$email\\\",\\\"subId\\\":\\\"$sid\\\"}"
-        local csrf; csrf=$(csrf_token)
-        curl -s --max-time 5 -b "$COOKIE_FILE" -X POST "http://127.0.0.1:2053${API_PREFIX}/panel/api/inbounds/addClient" \
-            -H "Content-Type: application/json" -H "X-Requested-With: XMLHttpRequest" -H "X-CSRF-Token: $csrf" \
-            -d "{\"id\":$id,\"settings\":\"{\\\"clients\\\":[${csv}]}\"}" | \
-        python3 -c "import sys,json; sys.exit(0 if json.load(sys.stdin).get('success') else 1)" 2>/dev/null
-    }
-
     get_inbound_ids
+    if [ -z "$ID_XHTTP" ] || [ -z "$ID_VISION" ]; then
+        echo -e "${R}[ERROR]${N} Required XHTTP/Vision inbounds were not found"
+        rm "$COOKIE_FILE"
+        exit 1
+    fi
 
     CID1=$(cat /proc/sys/kernel/random/uuid)
     CID2=$(cat /proc/sys/kernel/random/uuid)
@@ -241,24 +260,39 @@ add_client() {
     if [ "$UUID_MODE" = "2" ]; then
         SID1=$(head -c 16 /dev/urandom | md5sum | head -c 16)
         SID2=$(head -c 16 /dev/urandom | md5sum | head -c 16)
-        EMAIL1="${CLIENT_EMAIL:-$(gen_email)}"
-        EMAIL2="${CLIENT_EMAIL:-$(gen_email)}"
+        if [ -n "$CLIENT_EMAIL" ]; then
+            EMAIL1="${CLIENT_EMAIL}-xhttp"
+            EMAIL2="${CLIENT_EMAIL}-vision"
+        else
+            EMAIL1=$(gen_email)
+            EMAIL2=$(gen_email)
+        fi
     else
         SID1=$(head -c 16 /dev/urandom | md5sum | head -c 16)
         SID2=$SID1
         EMAIL1="${CLIENT_EMAIL:-$(gen_email)}"
         EMAIL2=$EMAIL1
+        CID2=$CID1
     fi
 
-    if add_client_to_inbound "$ID_XHTTP" "$CID1" "$SID1" "$EMAIL1" ""; then
-        echo -e "  ${G}[OK]${N} XHTTP client added"
+    if [ "$UUID_MODE" = "2" ]; then
+        PAYLOAD1=$(build_client_payload "$EMAIL1" "$CID1" "$SID1" "" "$ID_XHTTP")
+        PAYLOAD2=$(build_client_payload "$EMAIL2" "$CID2" "$SID2" "xtls-rprx-vision" "$ID_VISION")
+        RESP1=$(xui_json "http://127.0.0.1:2053${API_PREFIX}/panel/api/clients/add" "$PAYLOAD1")
+        RESP2=$(xui_json "http://127.0.0.1:2053${API_PREFIX}/panel/api/clients/add" "$PAYLOAD2")
+        RESPONSES="$RESP1
+$RESP2"
     else
-        echo -e "  ${R}[ERROR]${N} Failed to add XHTTP client"
+        PAYLOAD=$(build_client_payload "$EMAIL1" "$CID1" "$SID1" "xtls-rprx-vision" "$ID_XHTTP,$ID_VISION")
+        RESPONSES=$(xui_json "http://127.0.0.1:2053${API_PREFIX}/panel/api/clients/add" "$PAYLOAD")
     fi
-    if add_client_to_inbound "$ID_VISION" "$CID2" "$SID2" "$EMAIL2" "xtls-rprx-vision"; then
-        echo -e "  ${G}[OK]${N} Vision client added"
+
+    if echo "$RESPONSES" | python3 -c 'import json,sys; responses=[json.loads(line) for line in sys.stdin if line.strip()]; sys.exit(0 if responses and all(item.get("success") for item in responses) else 1)' 2>/dev/null; then
+        echo -e "  ${G}[OK]${N} Client records created and attached"
     else
-        echo -e "  ${R}[ERROR]${N} Failed to add Vision client"
+        echo -e "  ${R}[ERROR]${N} Failed to create client records"
+        rm "$COOKIE_FILE"
+        exit 1
     fi
 
     echo ""
@@ -435,14 +469,14 @@ echo ""
 echo -e "${Y}--- Client Configuration ---${N}"
 echo "How to handle subscription for the two inbounds (XHTTP backend + Vision frontend):"
 echo ""
-echo "  1) Different UUIDs, one subscription link (both configs under one link)"
+echo "  1) One UUID and one subscription link (both configs under one link)"
 echo "  2) Different UUIDs, separate subscription links (each its own link)"
 echo ""
 read -p "Choose (default: 1): " UUID_MODE
 UUID_MODE=${UUID_MODE:-1}
 echo ""
 
-read -p "Enable advanced XHTTP padding obfuscation? [y/N]: " XHTTP_OBFS_CHOICE
+read -p "Enable advanced XHTTP padding obfuscation (requires Xray-core v26.6.1 clients)? [y/N]: " XHTTP_OBFS_CHOICE
 case "${XHTTP_OBFS_CHOICE:-n}" in
     y|Y|yes|YES|Yes) XHTTP_ADVANCED_OBFS=true ;;
     *) XHTTP_ADVANCED_OBFS=false ;;
@@ -455,11 +489,17 @@ XHTTP_PATH="api/v$(shuf -i 1-999 -n 1)"
 
 CLIENT_ID=$(cat /proc/sys/kernel/random/uuid)
 CLIENT_ID_VISION=$(cat /proc/sys/kernel/random/uuid)
+CLIENT_SUFFIX=$(tr -dc 'a-z0-9' < /dev/urandom | head -c 10)
 if [ "$UUID_MODE" = "2" ]; then
     SUB_ID=$(head -c 16 /dev/urandom | md5sum | head -c 16)
     SUB_ID_VISION=$(head -c 16 /dev/urandom | md5sum | head -c 16)
+    CLIENT_EMAIL="xhttp-$CLIENT_SUFFIX"
+    CLIENT_EMAIL_VISION="vision-$CLIENT_SUFFIX"
 else
     SUB_ID=$(head -c 16 /dev/urandom | md5sum | head -c 16)
+    CLIENT_ID_VISION=$CLIENT_ID
+    CLIENT_EMAIL="client-$CLIENT_SUFFIX"
+    CLIENT_EMAIL_VISION=$CLIENT_EMAIL
 fi
 
 echo -e "${G}=== Configuration Summary ===${N}"
@@ -558,11 +598,13 @@ fi
 
 # 1. Add XHTTP Backend (Port 2023)
 echo "  Adding XHTTP Backend inbound..."
-XHTTP_PAYLOAD=$(build_xhttp_payload "$CLIENT_ID" "$SUB_ID" "$DOMAIN" "$XHTTP_PATH" "$XHTTP_ADVANCED_OBFS")
+XHTTP_PAYLOAD=$(build_xhttp_payload "$DOMAIN" "$XHTTP_PATH" "$XHTTP_ADVANCED_OBFS")
 XHTTP_RESP=$(xui_json "http://127.0.0.1:2053/panel/api/inbounds/add" "$XHTTP_PAYLOAD") || true
 if ! echo "$XHTTP_RESP" | python3 -c "import sys,json; sys.exit(0 if json.load(sys.stdin).get('success') else 1)" 2>/dev/null; then
-    echo -e "${Y}Warning:${N} XHTTP Backend creation failed (may already exist)"
+    echo -e "${R}[ERROR]${N} XHTTP Backend creation failed"
+    exit 1
 fi
+XHTTP_ID=$(echo "$XHTTP_RESP" | python3 -c 'import json,sys; print(json.load(sys.stdin)["obj"]["id"])')
 
 # 2. Add XTLS-Vision Frontend (Port 443)
 echo "  Adding XTLS-Vision Frontend inbound..."
@@ -571,16 +613,38 @@ FRONTEND_RESP=$(xui_json "http://127.0.0.1:2053/panel/api/inbounds/add" '{
   "up": 0, "down": 0, "total": 0,
   "remark": "VLESS-TCP-Vision-Frontend", "enable": true, "expiryTime": 0,
   "listen": "", "port": 443, "protocol": "vless",
-  "settings": "{\"clients\":[{\"id\":\"'"$CLIENT_ID_VISION"'\",\"flow\":\"xtls-rprx-vision\",\"subId\":\"'"${SUB_ID_VISION:-$SUB_ID}"'\"}],\"decryption\":\"none\",\"fallbacks\":[{\"dest\":\"@caddy_fallback\",\"xver\":2}]}",
+  "settings": "{\"clients\":[],\"decryption\":\"none\",\"fallbacks\":[{\"dest\":\"@caddy_fallback\",\"xver\":2}]}",
   "streamSettings": "{\"network\":\"tcp\",\"security\":\"tls\",\"tlsSettings\":{\"serverName\":\"'"$DOMAIN"'\",\"minVersion\":\"1.3\",\"maxVersion\":\"1.3\",\"cipherSuites\":\"\",\"certificates\":[{\"certificateFile\":\"'"$CERT_DIR/$DOMAIN"'.crt\",\"keyFile\":\"'"$CERT_DIR/$DOMAIN"'.key\"}],\"alpn\":[\"h2\",\"http/1.1\"]}}",
   "sniffing": "{\"enabled\":true,\"destOverride\":[\"http\",\"tls\"],\"routeOnly\":true}",
   "allocate": "{\"strategy\":\"always\",\"refresh\":5,\"concurrency\":3}"
 }') || true
 if ! echo "$FRONTEND_RESP" | python3 -c "import sys,json; sys.exit(0 if json.load(sys.stdin).get('success') else 1)" 2>/dev/null; then
-    echo -e "${Y}Warning:${N} Frontend inbound creation failed (certs may not be ready yet)"
+    echo -e "${R}[ERROR]${N} Frontend inbound creation failed"
+    exit 1
 fi
+FRONTEND_ID=$(echo "$FRONTEND_RESP" | python3 -c 'import json,sys; print(json.load(sys.stdin)["obj"]["id"])')
 
-# 3. Update 3x-ui credentials to user-provided values (if different from defaults)
+# 3. Create normalized clients and attach them to the inbounds. 3x-ui v3.2.8
+# subscription lookup uses clients/client_inbounds instead of embedded JSON only.
+echo "  Creating subscription clients..."
+if [ "$UUID_MODE" = "2" ]; then
+    XHTTP_CLIENT_PAYLOAD=$(build_client_payload "$CLIENT_EMAIL" "$CLIENT_ID" "$SUB_ID" "" "$XHTTP_ID")
+    XHTTP_CLIENT_RESP=$(xui_json "http://127.0.0.1:2053/panel/api/clients/add" "$XHTTP_CLIENT_PAYLOAD")
+    VISION_CLIENT_PAYLOAD=$(build_client_payload "$CLIENT_EMAIL_VISION" "$CLIENT_ID_VISION" "$SUB_ID_VISION" "xtls-rprx-vision" "$FRONTEND_ID")
+    VISION_CLIENT_RESP=$(xui_json "http://127.0.0.1:2053/panel/api/clients/add" "$VISION_CLIENT_PAYLOAD")
+    CLIENT_RESPONSES="$XHTTP_CLIENT_RESP
+$VISION_CLIENT_RESP"
+else
+    CLIENT_PAYLOAD=$(build_client_payload "$CLIENT_EMAIL" "$CLIENT_ID" "$SUB_ID" "xtls-rprx-vision" "$XHTTP_ID,$FRONTEND_ID")
+    CLIENT_RESPONSES=$(xui_json "http://127.0.0.1:2053/panel/api/clients/add" "$CLIENT_PAYLOAD")
+fi
+if ! echo "$CLIENT_RESPONSES" | python3 -c 'import json,sys; responses=[json.loads(line) for line in sys.stdin if line.strip()]; sys.exit(0 if responses and all(item.get("success") for item in responses) else 1)' 2>/dev/null; then
+    echo -e "${R}[ERROR]${N} Subscription client creation failed"
+    exit 1
+fi
+echo -e "  ${G}Subscription clients created${N}"
+
+# 4. Update 3x-ui credentials to user-provided values (if different from defaults)
 if [ "$XUI_USER" != "admin" ] || [ "$XUI_PASS" != "admin" ]; then
     echo "  Updating 3x-ui credentials..."
     CRED_RESP=$(xui_json "http://127.0.0.1:2053/panel/setting/updateUser" \
@@ -592,7 +656,7 @@ if [ "$XUI_USER" != "admin" ] || [ "$XUI_PASS" != "admin" ]; then
     fi
 fi
 
-# 4. Configure subscription and panel settings
+# 5. Configure subscription and panel settings
 echo "  Configuring panel and subscription settings..."
 ALL_SETTINGS_RESP=$(xui_json "http://127.0.0.1:2053/panel/setting/all" "{}")
 UPDATED_SETTINGS=$(echo "$ALL_SETTINGS_RESP" | python3 -c "
@@ -612,7 +676,7 @@ else
     echo -e "${Y}Warning:${N} Failed to configure panel settings"
 fi
 
-# 5. Restart panel to apply settings
+# 6. Restart panel to apply settings
 echo "  Restarting panel..."
 CSRF=$(csrf_token)
 curl -s --max-time 10 -b "$COOKIE_FILE" -c "$COOKIE_FILE" -X POST "http://127.0.0.1:2053/panel/setting/restartPanel" \
