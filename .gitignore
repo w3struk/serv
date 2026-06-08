@@ -1,6 +1,7 @@
-lampac/config
 3x-ui/db
 caddy/data
 Caddyfile
 
-   
+# MemPalace
+mempalace.yaml
+entities.json

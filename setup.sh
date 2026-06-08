@@ -19,10 +19,52 @@ N="\033[0m"
 
 API_PREFIX=""
 
+ensure_jq() {
+    if command -v jq >/dev/null 2>&1; then
+        return 0
+    fi
+
+    echo -e "${Y}jq not found. Installing jq...${N}"
+    local installed=false
+    if command -v apt-get >/dev/null 2>&1; then
+        if apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y jq; then
+            installed=true
+        fi
+    elif command -v dnf >/dev/null 2>&1; then
+        if dnf install -y jq; then
+            installed=true
+        fi
+    elif command -v yum >/dev/null 2>&1; then
+        if yum install -y jq; then
+            installed=true
+        fi
+    elif command -v apk >/dev/null 2>&1; then
+        if apk add --no-cache jq; then
+            installed=true
+        fi
+    else
+        echo -e "${R}[ERROR]${N} jq is required, but no supported package manager was found. Install jq manually and rerun this script."
+        exit 1
+    fi
+
+    if [ "$installed" != "true" ] || ! command -v jq >/dev/null 2>&1; then
+        echo -e "${R}[ERROR]${N} jq installation failed. Install jq manually and rerun this script."
+        exit 1
+    fi
+}
+
+jq_success() {
+    jq -e '.success == true' >/dev/null 2>&1
+}
+
+jq_all_success() {
+    jq -s -e 'length > 0 and all(.[]; .success == true)' >/dev/null 2>&1
+}
+
 # API helpers (use API_PREFIX for non-install modes like add-client)
 csrf_token() {
     curl -s --max-time 5 -b "$COOKIE_FILE" -c "$COOKIE_FILE" "http://127.0.0.1:2053${API_PREFIX}/csrf-token" \
-        | python3 -c "import sys,json; print(json.load(sys.stdin)['obj'])"
+        | jq -r '.obj // empty' 2>/dev/null
 }
 
 xui_json() {
@@ -48,97 +90,136 @@ xui_login() {
         -H "X-Requested-With: XMLHttpRequest" \
         -H "X-CSRF-Token: $csrf" \
         -d "username=$u&password=$p")
-    echo "$resp" | python3 -c "import sys,json; sys.exit(0 if json.load(sys.stdin).get('success') else 1)" 2>/dev/null
+    echo "$resp" | jq_success
 }
 
 build_xhttp_payload() {
-    python3 - "$1" "$2" "$3" <<'PY'
-import json
-import sys
-
-domain, xhttp_path, advanced_obfs = sys.argv[1:]
-
-xhttp_settings = {
-    "path": f"/{xhttp_path}",
-    "mode": "auto",
-    "headers": {"User-Agent": "!chrome"},
-}
-if advanced_obfs == "true":
-    xhttp_settings.update({
-        "xPaddingObfsMode": True,
-        "xPaddingBytes": "100-1000",
-        "xPaddingKey": "trace",
-        "xPaddingHeader": "X-Trace-ID",
-        "xPaddingPlacement": "queryInHeader",
-        "xPaddingMethod": "tokenish",
-    })
-
-payload = {
-    "up": 0,
-    "down": 0,
-    "total": 0,
-    "remark": "VLESS-XHTTP-Backend",
-    "enable": True,
-    "expiryTime": 0,
-    "listen": "@uds_xhttp",
-    "port": 2023,
-    "protocol": "vless",
-    "settings": json.dumps({
-        "clients": [],
-        "decryption": "none",
-        "fallbacks": [],
-    }, separators=(",", ":")),
-    "streamSettings": json.dumps({
-        "network": "xhttp",
-        "security": "none",
-        "sockopt": {"acceptProxyProtocol": True},
-        "externalProxy": [{
-            "dest": domain,
-            "port": 443,
-            "forceTls": "tls",
-            "remark": "",
-        }],
-        "xhttpSettings": xhttp_settings,
-        "finalmask": {},
-    }, separators=(",", ":")),
-    "sniffing": json.dumps({
-        "enabled": True,
-        "destOverride": ["http", "tls"],
-        "routeOnly": True,
-    }, separators=(",", ":")),
-    "allocate": json.dumps({
-        "strategy": "always",
-        "refresh": 5,
-        "concurrency": 3,
-    }, separators=(",", ":")),
-}
-print(json.dumps(payload, separators=(",", ":")))
-PY
+    jq -nc \
+        --arg domain "$1" \
+        --arg path "/$2" \
+        --arg advanced_obfs "$3" '
+        def xhttp_settings:
+            {
+                path: $path,
+                mode: "auto",
+                headers: {"User-Agent": "!chrome"}
+            } + if $advanced_obfs == "true" then {
+                xPaddingObfsMode: true,
+                xPaddingBytes: "100-1000",
+                xPaddingKey: "trace",
+                xPaddingHeader: "X-Trace-ID",
+                xPaddingPlacement: "queryInHeader",
+                xPaddingMethod: "tokenish"
+            } else {} end;
+        {
+            up: 0,
+            down: 0,
+            total: 0,
+            remark: "VLESS-XHTTP-Backend",
+            enable: true,
+            expiryTime: 0,
+            listen: "@uds_xhttp",
+            port: 2023,
+            protocol: "vless",
+            settings: ({
+                clients: [],
+                decryption: "none",
+                fallbacks: []
+            } | tojson),
+            streamSettings: ({
+                network: "xhttp",
+                security: "none",
+                sockopt: {acceptProxyProtocol: true},
+                externalProxy: [{
+                    dest: $domain,
+                    port: 443,
+                    forceTls: "tls",
+                    remark: ""
+                }],
+                xhttpSettings: xhttp_settings,
+                finalmask: {}
+            } | tojson),
+            sniffing: ({
+                enabled: true,
+                destOverride: ["http", "tls"],
+                routeOnly: true
+            } | tojson),
+            allocate: ({
+                strategy: "always",
+                refresh: 5,
+                concurrency: 3
+            } | tojson)
+        }'
 }
 
 build_client_payload() {
-    python3 - "$1" "$2" "$3" "$4" "$5" <<'PY'
-import json
-import sys
-
-email, client_id, sub_id, flow, inbound_ids = sys.argv[1:]
-client = {
-    "email": email,
-    "id": client_id,
-    "subId": sub_id,
-    "enable": True,
-    "limitIp": 0,
-    "totalGB": 0,
-    "expiryTime": 0,
-    "tgId": 0,
+    jq -nc \
+        --arg email "$1" \
+        --arg client_id "$2" \
+        --arg sub_id "$3" \
+        --arg flow "$4" \
+        --arg inbound_ids "$5" '
+        {
+            client: ({
+                email: $email,
+                id: $client_id,
+                subId: $sub_id,
+                enable: true,
+                limitIp: 0,
+                totalGB: 0,
+                expiryTime: 0,
+                tgId: 0
+            } + if $flow != "" then {flow: $flow} else {} end),
+            inboundIds: ($inbound_ids | split(",") | map(tonumber))
+        }'
 }
-if flow:
-    client["flow"] = flow
-print(json.dumps({
-    "client": client,
-    "inboundIds": [int(value) for value in inbound_ids.split(",")],
-}, separators=(",", ":")))
-PY
+
+build_frontend_payload() {
+    jq -nc \
+        --arg domain "$1" \
+        --arg certificate_file "$2" \
+        --arg key_file "$3" '
+        {
+            up: 0,
+            down: 0,
+            total: 0,
+            remark: "VLESS-TCP-Vision-Frontend",
+            enable: true,
+            expiryTime: 0,
+            listen: "",
+            port: 443,
+            protocol: "vless",
+            settings: ({
+                clients: [],
+                decryption: "none",
+                fallbacks: [{dest: "@caddy_fallback", xver: 2}]
+            } | tojson),
+            streamSettings: ({
+                network: "tcp",
+                security: "tls",
+                tlsSettings: {
+                    serverName: $domain,
+                    minVersion: "1.3",
+                    maxVersion: "1.3",
+                    cipherSuites: "",
+                    certificates: [{
+                        certificateFile: $certificate_file,
+                        keyFile: $key_file
+                    }],
+                    alpn: ["h2", "http/1.1"]
+                }
+            } | tojson),
+            sniffing: ({
+                enabled: true,
+                destOverride: ["http", "tls"],
+                routeOnly: true
+            } | tojson),
+            allocate: ({
+                strategy: "always",
+                refresh: 5,
+                concurrency: 3
+            } | tojson)
+        }'
 }
 
 # Check if docker services are running
@@ -239,8 +320,8 @@ add_client() {
         local csrf; csrf=$(csrf_token)
         local resp; resp=$(curl -s --max-time 5 -b "$COOKIE_FILE" "http://127.0.0.1:2053${API_PREFIX}/panel/api/inbounds/list" \
             -H "X-Requested-With: XMLHttpRequest" -H "X-CSRF-Token: $csrf")
-        ID_XHTTP=$(echo "$resp" | python3 -c "import sys,json; [print(i['id']) for i in json.load(sys.stdin)['obj'] if i.get('port')==2023]" 2>/dev/null)
-        ID_VISION=$(echo "$resp" | python3 -c "import sys,json; [print(i['id']) for i in json.load(sys.stdin)['obj'] if i.get('port')==443]" 2>/dev/null)
+        ID_XHTTP=$(echo "$resp" | jq -r '.obj[]? | select(.port == 2023) | .id' 2>/dev/null | head -1)
+        ID_VISION=$(echo "$resp" | jq -r '.obj[]? | select(.port == 443) | .id' 2>/dev/null | head -1)
     }
 
     gen_email() {
@@ -287,7 +368,7 @@ $RESP2"
         RESPONSES=$(xui_json "http://127.0.0.1:2053${API_PREFIX}/panel/api/clients/add" "$PAYLOAD")
     fi
 
-    if echo "$RESPONSES" | python3 -c 'import json,sys; responses=[json.loads(line) for line in sys.stdin if line.strip()]; sys.exit(0 if responses and all(item.get("success") for item in responses) else 1)' 2>/dev/null; then
+    if echo "$RESPONSES" | jq_all_success; then
         echo -e "  ${G}[OK]${N} Client records created and attached"
     else
         echo -e "  ${R}[ERROR]${N} Failed to create client records"
@@ -352,36 +433,26 @@ show_status() {
 
     echo ""
     echo -e "${B}Inbounds & Clients:${N}"
-    if docker exec 3xui_app cat bin/config.json 2>/dev/null | python3 -c "
-import sys, json
-c = json.load(sys.stdin)
-found = False
-for i in c.get('inbounds', []):
-    t = i.get('tag', '')
-    if 'api' in t: continue
-    port = i.get('port', '')
-    net = i.get('streamSettings', {}).get('network', 'tcp')
-    sec = i.get('streamSettings', {}).get('security', 'none')
-    settings = i.get('settings', {})
-    if isinstance(settings, str):
-        try: import json; settings = json.loads(settings)
-        except: settings = {}
-    clients = settings.get('clients', [])
-    count = len(clients)
-    remark = i.get('remark', t)
-    print(f'  {remark} ({port}, {net}, {sec}) - {count} client(s)')
-    for cl in clients:
-        uid = cl.get('id', '')[:8]
-        sub = cl.get('subId', '')
-        flow = cl.get('flow', '')
-        email = cl.get('email', '')
-        fstr = f' flow={flow}' if flow else ''
-        estr = f' email={email}' if email else ''
-        print(f'    └ {uid}... sub={sub}{fstr}{estr}')
-    found = True
-if not found:
-    print('  (none)')
-" 2>/dev/null; then
+    local xui_config
+    if xui_config=$(docker exec 3xui_app cat bin/config.json 2>/dev/null) && [ -n "$xui_config" ] && echo "$xui_config" | jq -r '
+def settings_obj:
+    if (.settings | type) == "string" then (.settings | fromjson? // {})
+    elif (.settings | type) == "object" then .settings
+    else {} end;
+
+[.inbounds[]? | select(((.tag // "") | contains("api")) | not)] as $inbounds
+| if ($inbounds | length) == 0 then
+    "  (none)"
+  else
+    $inbounds[]
+    | . as $inbound
+    | ($inbound | settings_obj | (.clients // [])) as $clients
+    | [
+        "  \($inbound.remark // $inbound.tag // "") (\($inbound.port // ""), \($inbound.streamSettings.network // "tcp"), \($inbound.streamSettings.security // "none")) - \($clients | length) client(s)",
+        ($clients[]? | "    └ \((.id // "")[0:8])... sub=\(.subId // "")\(if (.flow // "") != "" then " flow=\(.flow)" else "" end)\(if (.email // "") != "" then " email=\(.email)" else "" end)")
+      ][]
+  end
+' 2>/dev/null; then
         :  # success
     else
         echo -e "  ${R}cannot read config${N}"
@@ -424,6 +495,7 @@ case "${1:-install}" in
         exit 0
         ;;
     add-client)
+        ensure_jq
         add_client
         exit 0
         ;;
@@ -432,10 +504,12 @@ case "${1:-install}" in
             echo -e "${R}[ERROR]${N} Installation not found."
             exit 1
         }
+        ensure_jq
         show_status
         exit 0
         ;;
     install)
+        ensure_jq
         ;;  # continue below
     *)
         echo -e "${R}[ERROR]${N} Unknown command: $1"
@@ -600,29 +674,22 @@ fi
 echo "  Adding XHTTP Backend inbound..."
 XHTTP_PAYLOAD=$(build_xhttp_payload "$DOMAIN" "$XHTTP_PATH" "$XHTTP_ADVANCED_OBFS")
 XHTTP_RESP=$(xui_json "http://127.0.0.1:2053/panel/api/inbounds/add" "$XHTTP_PAYLOAD") || true
-if ! echo "$XHTTP_RESP" | python3 -c "import sys,json; sys.exit(0 if json.load(sys.stdin).get('success') else 1)" 2>/dev/null; then
+if ! echo "$XHTTP_RESP" | jq_success; then
     echo -e "${R}[ERROR]${N} XHTTP Backend creation failed"
     exit 1
 fi
-XHTTP_ID=$(echo "$XHTTP_RESP" | python3 -c 'import json,sys; print(json.load(sys.stdin)["obj"]["id"])')
+XHTTP_ID=$(echo "$XHTTP_RESP" | jq -r '.obj.id // empty')
 
 # 2. Add XTLS-Vision Frontend (Port 443)
 echo "  Adding XTLS-Vision Frontend inbound..."
 CERT_DIR="/etc/x-ui/certs/acme-v02.api.letsencrypt.org-directory/$DOMAIN"
-FRONTEND_RESP=$(xui_json "http://127.0.0.1:2053/panel/api/inbounds/add" '{
-  "up": 0, "down": 0, "total": 0,
-  "remark": "VLESS-TCP-Vision-Frontend", "enable": true, "expiryTime": 0,
-  "listen": "", "port": 443, "protocol": "vless",
-  "settings": "{\"clients\":[],\"decryption\":\"none\",\"fallbacks\":[{\"dest\":\"@caddy_fallback\",\"xver\":2}]}",
-  "streamSettings": "{\"network\":\"tcp\",\"security\":\"tls\",\"tlsSettings\":{\"serverName\":\"'"$DOMAIN"'\",\"minVersion\":\"1.3\",\"maxVersion\":\"1.3\",\"cipherSuites\":\"\",\"certificates\":[{\"certificateFile\":\"'"$CERT_DIR/$DOMAIN"'.crt\",\"keyFile\":\"'"$CERT_DIR/$DOMAIN"'.key\"}],\"alpn\":[\"h2\",\"http/1.1\"]}}",
-  "sniffing": "{\"enabled\":true,\"destOverride\":[\"http\",\"tls\"],\"routeOnly\":true}",
-  "allocate": "{\"strategy\":\"always\",\"refresh\":5,\"concurrency\":3}"
-}') || true
-if ! echo "$FRONTEND_RESP" | python3 -c "import sys,json; sys.exit(0 if json.load(sys.stdin).get('success') else 1)" 2>/dev/null; then
+FRONTEND_PAYLOAD=$(build_frontend_payload "$DOMAIN" "$CERT_DIR/$DOMAIN.crt" "$CERT_DIR/$DOMAIN.key")
+FRONTEND_RESP=$(xui_json "http://127.0.0.1:2053/panel/api/inbounds/add" "$FRONTEND_PAYLOAD") || true
+if ! echo "$FRONTEND_RESP" | jq_success; then
     echo -e "${R}[ERROR]${N} Frontend inbound creation failed"
     exit 1
 fi
-FRONTEND_ID=$(echo "$FRONTEND_RESP" | python3 -c 'import json,sys; print(json.load(sys.stdin)["obj"]["id"])')
+FRONTEND_ID=$(echo "$FRONTEND_RESP" | jq -r '.obj.id // empty')
 
 # 3. Create normalized clients and attach them to the inbounds. 3x-ui v3.2.8
 # subscription lookup uses clients/client_inbounds instead of embedded JSON only.
@@ -638,7 +705,7 @@ else
     CLIENT_PAYLOAD=$(build_client_payload "$CLIENT_EMAIL" "$CLIENT_ID" "$SUB_ID" "xtls-rprx-vision" "$XHTTP_ID,$FRONTEND_ID")
     CLIENT_RESPONSES=$(xui_json "http://127.0.0.1:2053/panel/api/clients/add" "$CLIENT_PAYLOAD")
 fi
-if ! echo "$CLIENT_RESPONSES" | python3 -c 'import json,sys; responses=[json.loads(line) for line in sys.stdin if line.strip()]; sys.exit(0 if responses and all(item.get("success") for item in responses) else 1)' 2>/dev/null; then
+if ! echo "$CLIENT_RESPONSES" | jq_all_success; then
     echo -e "${R}[ERROR]${N} Subscription client creation failed"
     exit 1
 fi
@@ -647,9 +714,12 @@ echo -e "  ${G}Subscription clients created${N}"
 # 4. Update 3x-ui credentials to user-provided values (if different from defaults)
 if [ "$XUI_USER" != "admin" ] || [ "$XUI_PASS" != "admin" ]; then
     echo "  Updating 3x-ui credentials..."
-    CRED_RESP=$(xui_json "http://127.0.0.1:2053/panel/setting/updateUser" \
-        '{"oldUsername":"admin","oldPassword":"admin","newUsername":"'"$XUI_USER"'","newPassword":"'"$XUI_PASS"'"}')
-    if echo "$CRED_RESP" | python3 -c "import sys,json; sys.exit(0 if json.load(sys.stdin).get('success') else 1)" 2>/dev/null; then
+    CRED_PAYLOAD=$(jq -nc \
+        --arg new_username "$XUI_USER" \
+        --arg new_password "$XUI_PASS" \
+        '{oldUsername:"admin",oldPassword:"admin",newUsername:$new_username,newPassword:$new_password}')
+    CRED_RESP=$(xui_json "http://127.0.0.1:2053/panel/setting/updateUser" "$CRED_PAYLOAD")
+    if echo "$CRED_RESP" | jq_success; then
         echo -e "  ${G}Credentials updated${N}"
     else
         echo -e "${Y}Warning:${N} Failed to update credentials"
@@ -659,18 +729,17 @@ fi
 # 5. Configure subscription and panel settings
 echo "  Configuring panel and subscription settings..."
 ALL_SETTINGS_RESP=$(xui_json "http://127.0.0.1:2053/panel/setting/all" "{}")
-UPDATED_SETTINGS=$(echo "$ALL_SETTINGS_RESP" | python3 -c "
-import sys, json
-data = json.load(sys.stdin)
-obj = data['obj']
-obj['webBasePath'] = '/$ADMIN_PATH/'
-obj['subEnable'] = True
-obj['subPath'] = '/$SUB_PATH/'
-obj['subURI'] = 'https://$DOMAIN/$SUB_PATH/'
-print(json.dumps(obj))
-")
+UPDATED_SETTINGS=$(echo "$ALL_SETTINGS_RESP" | jq -c \
+    --arg web_base_path "/$ADMIN_PATH/" \
+    --arg sub_path "/$SUB_PATH/" \
+    --arg sub_uri "https://$DOMAIN/$SUB_PATH/" \
+    '.obj
+     | .webBasePath = $web_base_path
+     | .subEnable = true
+     | .subPath = $sub_path
+     | .subURI = $sub_uri')
 SETTINGS_RESP=$(xui_json "http://127.0.0.1:2053/panel/setting/update" "$UPDATED_SETTINGS")
-if echo "$SETTINGS_RESP" | python3 -c "import sys,json; sys.exit(0 if json.load(sys.stdin).get('success') else 1)" 2>/dev/null; then
+if echo "$SETTINGS_RESP" | jq_success; then
     echo -e "  ${G}Panel and subscription configured${N}"
 else
     echo -e "${Y}Warning:${N} Failed to configure panel settings"
