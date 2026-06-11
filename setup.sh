@@ -1,6 +1,44 @@
 #!/bin/bash
 set -e
 
+REPO_URL="https://github.com/w3struk/serv.git"
+INSTALL_DIR="${SERV_INSTALL_DIR:-/opt/serv}"
+
+# ─── Self-loading bootstrap ──────────────────────────────
+LAUNCH_DIR="$(cd "$(dirname "$0")" && pwd -P 2>/dev/null || echo "/dev/null")"
+if [ ! -f "$LAUNCH_DIR/docker-compose.yml" ]; then
+    [ "$EUID" -ne 0 ] && { echo "[ERROR] Run as root"; exit 1; }
+
+    if ! command -v git &>/dev/null; then
+        echo "Installing git..."
+        if command -v apt-get &>/dev/null; then
+            apt-get update -qq && DEBIAN_FRONTEND=noninteractive apt-get install -y -qq git
+        elif command -v dnf &>/dev/null; then
+            dnf install -y git
+        elif command -v yum &>/dev/null; then
+            yum install -y git
+        elif command -v apk &>/dev/null; then
+            apk add --no-cache git
+        else
+            echo "[ERROR] git is required. Install git manually and re-run."
+            exit 1
+        fi
+    fi
+
+    if [ -d "$INSTALL_DIR/.git" ]; then
+        cd "$INSTALL_DIR" && git fetch origin main && git reset --hard origin/main
+    elif [ -d "$INSTALL_DIR" ]; then
+        echo "[ERROR] $INSTALL_DIR exists but is not a git repository. Remove it first."
+        exit 1
+    else
+        mkdir -p "$(dirname "$INSTALL_DIR")"
+        git clone --depth 1 --branch main "$REPO_URL" "$INSTALL_DIR"
+    fi
+
+    exec "$INSTALL_DIR/setup.sh" "$@"
+fi
+
+# ─── Normal startup ──────────────────────────────────────
 if [ "$EUID" -ne 0 ]; then
     echo -e "\033[0;31m[ERROR]\033[0m Run as root"
     exit 1
@@ -174,54 +212,6 @@ build_client_payload() {
         }'
 }
 
-build_frontend_payload() {
-    jq -nc \
-        --arg domain "$1" \
-        --arg certificate_file "$2" \
-        --arg key_file "$3" '
-        {
-            up: 0,
-            down: 0,
-            total: 0,
-            remark: "VLESS-TCP-Vision-Frontend",
-            enable: true,
-            expiryTime: 0,
-            listen: "",
-            port: 443,
-            protocol: "vless",
-            settings: ({
-                clients: [],
-                decryption: "none",
-                fallbacks: [{dest: "@caddy_fallback", xver: 2}]
-            } | tojson),
-            streamSettings: ({
-                network: "tcp",
-                security: "tls",
-                tlsSettings: {
-                    serverName: $domain,
-                    minVersion: "1.3",
-                    maxVersion: "1.3",
-                    cipherSuites: "",
-                    certificates: [{
-                        certificateFile: $certificate_file,
-                        keyFile: $key_file
-                    }],
-                    alpn: ["h2", "http/1.1"]
-                }
-            } | tojson),
-            sniffing: ({
-                enabled: true,
-                destOverride: ["http", "tls"],
-                routeOnly: true
-            } | tojson),
-            allocate: ({
-                strategy: "always",
-                refresh: 5,
-                concurrency: 3
-            } | tojson)
-        }'
-}
-
 # Check if docker services are running
 check_installed() {
     docker compose ls --filter "name=serv" 2>/dev/null | grep -q "serv" && return 0
@@ -246,13 +236,8 @@ print_summary() {
     echo -e "  ${C}Panel:${N}  https://${C}$DOMAIN${N}/$ADMIN_PATH/"
     echo ""
     if [ -n "${SUB_ID:+x}" ]; then
-        echo -e "${B}Subscription links:${N}"
-        if [ "$UUID_MODE" = "2" ]; then
-            echo -e "  ${C}XHTTP:${N}  https://${C}$DOMAIN${N}/$SUB_PATH/$SUB_ID"
-            echo -e "  ${C}Vision:${N} https://${C}$DOMAIN${N}/$SUB_PATH/$SUB_ID_VISION"
-        else
-            echo -e "  ${C}Single:${N} https://${C}$DOMAIN${N}/$SUB_PATH/$SUB_ID"
-        fi
+        echo -e "${B}XHTTP Subscription:${N}"
+        echo -e "  ${C}Link:${N} https://${C}$DOMAIN${N}/$SUB_PATH/$SUB_ID"
         echo ""
     fi
     echo -e "${B}Credentials:${N}"
@@ -261,18 +246,11 @@ print_summary() {
     if [ -n "$CLIENT_ID" ]; then
         echo -e "  ${Y}XHTTP UUID:${N} ${C}$CLIENT_ID${N}"
     fi
-    if [ -n "$CLIENT_ID_VISION" ]; then
-        echo -e "  ${Y}Vision UUID:${N} ${C}$CLIENT_ID_VISION${N}"
-    fi
-    if [ -n "$SUB_ID_VISION" ]; then
-        echo -e "  ${Y}Vision SubID:${N} ${C}$SUB_ID_VISION${N}"
-    fi
     if [ -n "$XHTTP_PATH" ]; then
         echo -e "  ${Y}XHTTP path:${N} /$XHTTP_PATH/"
     fi
     echo ""
     echo -e "${Y}Note: Certificates might take a minute to generate.${N}"
-    echo -e "${Y}If the 443 port is not working immediately, wait a bit and restart 3x-ui.${N}"
     echo ""
 }
 
@@ -303,14 +281,6 @@ add_client() {
     fi
     echo -e "${G}Logged in${N}"
 
-    echo ""
-    echo "Subscription Configuration:"
-    echo "  1) One UUID and one subscription link (both configs under one link)"
-    echo "  2) Different UUIDs, separate subscription links (each its own link)"
-    read -p "Choose (default: 1): " UUID_MODE
-    UUID_MODE=${UUID_MODE:-1}
-    echo ""
-
     read -p "Enter client email/purpose (or press Enter for auto): " CLIENT_EMAIL
     echo ""
 
@@ -321,7 +291,9 @@ add_client() {
         local resp; resp=$(curl -s --max-time 5 -b "$COOKIE_FILE" "http://127.0.0.1:2053${API_PREFIX}/panel/api/inbounds/list" \
             -H "X-Requested-With: XMLHttpRequest" -H "X-CSRF-Token: $csrf")
         ID_XHTTP=$(echo "$resp" | jq -r '.obj[]? | select(.port == 2023) | .id' 2>/dev/null | head -1)
-        ID_VISION=$(echo "$resp" | jq -r '.obj[]? | select(.port == 443) | .id' 2>/dev/null | head -1)
+        if [ -z "$ID_XHTTP" ]; then
+            ID_XHTTP=$(echo "$resp" | jq -r '.obj[]? | select(.remark == "VLESS-XHTTP-Backend") | .id' 2>/dev/null | head -1)
+        fi
     }
 
     gen_email() {
@@ -329,49 +301,23 @@ add_client() {
     }
 
     get_inbound_ids
-    if [ -z "$ID_XHTTP" ] || [ -z "$ID_VISION" ]; then
-        echo -e "${R}[ERROR]${N} Required XHTTP/Vision inbounds were not found"
+    if [ -z "$ID_XHTTP" ]; then
+        echo -e "${R}[ERROR]${N} XHTTP inbound (port 2023 / remark VLESS-XHTTP-Backend) was not found"
         rm "$COOKIE_FILE"
         exit 1
     fi
 
-    CID1=$(cat /proc/sys/kernel/random/uuid)
-    CID2=$(cat /proc/sys/kernel/random/uuid)
+    CID=$(cat /proc/sys/kernel/random/uuid)
+    SID=$(head -c 16 /dev/urandom | md5sum | head -c 16)
+    EMAIL="${CLIENT_EMAIL:-$(gen_email)}"
 
-    if [ "$UUID_MODE" = "2" ]; then
-        SID1=$(head -c 16 /dev/urandom | md5sum | head -c 16)
-        SID2=$(head -c 16 /dev/urandom | md5sum | head -c 16)
-        if [ -n "$CLIENT_EMAIL" ]; then
-            EMAIL1="${CLIENT_EMAIL}-xhttp"
-            EMAIL2="${CLIENT_EMAIL}-vision"
-        else
-            EMAIL1=$(gen_email)
-            EMAIL2=$(gen_email)
-        fi
-    else
-        SID1=$(head -c 16 /dev/urandom | md5sum | head -c 16)
-        SID2=$SID1
-        EMAIL1="${CLIENT_EMAIL:-$(gen_email)}"
-        EMAIL2=$EMAIL1
-        CID2=$CID1
-    fi
+    PAYLOAD=$(build_client_payload "$EMAIL" "$CID" "$SID" "" "$ID_XHTTP")
+    RESPONSE=$(xui_json "http://127.0.0.1:2053${API_PREFIX}/panel/api/clients/add" "$PAYLOAD")
 
-    if [ "$UUID_MODE" = "2" ]; then
-        PAYLOAD1=$(build_client_payload "$EMAIL1" "$CID1" "$SID1" "" "$ID_XHTTP")
-        PAYLOAD2=$(build_client_payload "$EMAIL2" "$CID2" "$SID2" "xtls-rprx-vision" "$ID_VISION")
-        RESP1=$(xui_json "http://127.0.0.1:2053${API_PREFIX}/panel/api/clients/add" "$PAYLOAD1")
-        RESP2=$(xui_json "http://127.0.0.1:2053${API_PREFIX}/panel/api/clients/add" "$PAYLOAD2")
-        RESPONSES="$RESP1
-$RESP2"
+    if echo "$RESPONSE" | jq_success; then
+        echo -e "  ${G}[OK]${N} Client record created and attached"
     else
-        PAYLOAD=$(build_client_payload "$EMAIL1" "$CID1" "$SID1" "xtls-rprx-vision" "$ID_XHTTP,$ID_VISION")
-        RESPONSES=$(xui_json "http://127.0.0.1:2053${API_PREFIX}/panel/api/clients/add" "$PAYLOAD")
-    fi
-
-    if echo "$RESPONSES" | jq_all_success; then
-        echo -e "  ${G}[OK]${N} Client records created and attached"
-    else
-        echo -e "  ${R}[ERROR]${N} Failed to create client records"
+        echo -e "  ${R}[ERROR]${N} Failed to create client record"
         rm "$COOKIE_FILE"
         exit 1
     fi
@@ -382,18 +328,10 @@ $RESP2"
     echo -e "${G}╚══════════════════════════════════════╝${N}"
     echo ""
     SUB_PATH=$(sqlite3 /opt/serv/3x-ui/db/x-ui.db "SELECT value FROM settings WHERE key='subPath' LIMIT 1;" 2>/dev/null || echo "/sub/")
-    if [ "$UUID_MODE" = "2" ]; then
-        echo -e "${B}Subscription links:${N}"
-        echo -e "  ${C}XHTTP:${N}  https://${C}${DOMAIN}${N}${SUB_PATH}${SID1}  (${EMAIL1})"
-        echo -e "  ${C}Vision:${N} https://${C}${DOMAIN}${N}${SUB_PATH}${SID2}  (${EMAIL2})"
-    else
-        echo -e "${B}Subscription link:${N}"
-        echo -e "  ${C}Single:${N} https://${C}${DOMAIN}${N}${SUB_PATH}${SID1}  (${EMAIL1})"
-    fi
+    echo -e "${B}XHTTP Subscription link:${N}"
+    echo -e "  ${C}Link:${N} https://${C}${DOMAIN}${N}${SUB_PATH}${SID}  (${EMAIL})"
     echo ""
-    echo -e "${B}UUIDs:${N}"
-    echo -e "  ${Y}XHTTP:${N}  ${C}$CID1${N}"
-    echo -e "  ${Y}Vision:${N} ${C}$CID2${N}"
+    echo -e "${B}XHTTP UUID:${N} ${C}$CID${N}"
 
     rm "$COOKIE_FILE"
 }
@@ -476,15 +414,15 @@ show_help() {
     echo -e "${B}Usage:${N} $0 [command]"
     echo ""
     echo "Commands:"
-    echo -e "  (no args)    ${C}Full installation${N}  — setup everything from scratch"
-    echo -e "  ${C}add-client${N}   ${Y}Add new client${N}      — add client(s) to existing installation"
-    echo -e "  ${C}status${N}       ${Y}Show status${N}         — display current configuration"
-    echo -e "  ${C}help${N}         ${Y}Show help${N}"
+    echo -e "  (no args)      ${C}Full installation${N}  — setup everything from scratch"
+    echo -e "  ${C}add-client${N}     ${Y}Add new client${N}      — add a client to existing installation"
+    echo -e "  ${C}status${N}         ${Y}Show status${N}         — display current configuration"
+    echo -e "  ${C}help${N}           ${Y}Show help${N}"
     echo ""
     echo -e "${B}Examples:${N}"
-    echo -e "  $0                  # Full install"
-    echo -e "  $0 add-client       # Add new client"
-    echo -e "  $0 status           # Show status"
+    echo -e "  $0                    # Full install"
+    echo -e "  $0 add-client         # Add new client"
+    echo -e "  $0 status             # Show status"
     echo ""
 }
 
@@ -541,14 +479,6 @@ echo -e "${Y}-------------------------------${N}"
 echo ""
 
 echo -e "${Y}--- Client Configuration ---${N}"
-echo "How to handle subscription for the two inbounds (XHTTP backend + Vision frontend):"
-echo ""
-echo "  1) One UUID and one subscription link (both configs under one link)"
-echo "  2) Different UUIDs, separate subscription links (each its own link)"
-echo ""
-read -p "Choose (default: 1): " UUID_MODE
-UUID_MODE=${UUID_MODE:-1}
-echo ""
 
 read -p "Enable advanced XHTTP padding obfuscation (requires Xray-core v26.6.1 clients)? [y/N]: " XHTTP_OBFS_CHOICE
 case "${XHTTP_OBFS_CHOICE:-n}" in
@@ -562,19 +492,9 @@ SUB_PATH="sub-$(head -c 8 /dev/urandom | base64 | tr -dc 'a-z0-9' | head -c 8)"
 XHTTP_PATH="api/v$(shuf -i 1-999 -n 1)"
 
 CLIENT_ID=$(cat /proc/sys/kernel/random/uuid)
-CLIENT_ID_VISION=$(cat /proc/sys/kernel/random/uuid)
+SUB_ID=$(head -c 16 /dev/urandom | md5sum | head -c 16)
 CLIENT_SUFFIX=$(tr -dc 'a-z0-9' < /dev/urandom | head -c 10)
-if [ "$UUID_MODE" = "2" ]; then
-    SUB_ID=$(head -c 16 /dev/urandom | md5sum | head -c 16)
-    SUB_ID_VISION=$(head -c 16 /dev/urandom | md5sum | head -c 16)
-    CLIENT_EMAIL="xhttp-$CLIENT_SUFFIX"
-    CLIENT_EMAIL_VISION="vision-$CLIENT_SUFFIX"
-else
-    SUB_ID=$(head -c 16 /dev/urandom | md5sum | head -c 16)
-    CLIENT_ID_VISION=$CLIENT_ID
-    CLIENT_EMAIL="client-$CLIENT_SUFFIX"
-    CLIENT_EMAIL_VISION=$CLIENT_EMAIL
-fi
+CLIENT_EMAIL="client-$CLIENT_SUFFIX"
 
 echo -e "${G}=== Configuration Summary ===${N}"
 echo -e "${Y}Domain:${N}      ${C}$DOMAIN${N}"
@@ -582,7 +502,6 @@ echo -e "${Y}Admin path:${N}  /$ADMIN_PATH/"
 echo -e "${Y}Sub path:${N}    /$SUB_PATH/"
 echo -e "${Y}XHTTP path:${N}  /$XHTTP_PATH/"
 echo -e "${Y}XHTTP UUID:${N}  ${C}$CLIENT_ID${N}"
-echo -e "${Y}Vision UUID:${N} ${C}$CLIENT_ID_VISION${N}"
 echo -e "${Y}Advanced XHTTP padding:${N} $XHTTP_ADVANCED_OBFS"
 echo ""
 
@@ -608,6 +527,7 @@ cp "$SERVER_DIR/Caddyfile.template" "$SERVER_DIR/Caddyfile"
 sed -i "s|\$DOMAIN|$DOMAIN|g" "$SERVER_DIR/Caddyfile"
 sed -i "s|\$ADMIN_PATH|$ADMIN_PATH|g" "$SERVER_DIR/Caddyfile"
 sed -i "s|\$SUB_PATH|$SUB_PATH|g" "$SERVER_DIR/Caddyfile"
+sed -i "s|\$XHTTP_PATH|$XHTTP_PATH|g" "$SERVER_DIR/Caddyfile"
 echo -e "  ${G}Domain and paths updated${N}"
 
 echo -e "${G}[4/8]${N} Generating Caddy bcrypt hash..."
@@ -680,36 +600,15 @@ if ! echo "$XHTTP_RESP" | jq_success; then
 fi
 XHTTP_ID=$(echo "$XHTTP_RESP" | jq -r '.obj.id // empty')
 
-# 2. Add XTLS-Vision Frontend (Port 443)
-echo "  Adding XTLS-Vision Frontend inbound..."
-CERT_DIR="/etc/x-ui/certs/acme-v02.api.letsencrypt.org-directory/$DOMAIN"
-FRONTEND_PAYLOAD=$(build_frontend_payload "$DOMAIN" "$CERT_DIR/$DOMAIN.crt" "$CERT_DIR/$DOMAIN.key")
-FRONTEND_RESP=$(xui_json "http://127.0.0.1:2053/panel/api/inbounds/add" "$FRONTEND_PAYLOAD") || true
-if ! echo "$FRONTEND_RESP" | jq_success; then
-    echo -e "${R}[ERROR]${N} Frontend inbound creation failed"
-    exit 1
-fi
-FRONTEND_ID=$(echo "$FRONTEND_RESP" | jq -r '.obj.id // empty')
-
-# 3. Create normalized clients and attach them to the inbounds. 3x-ui v3.2.8
-# subscription lookup uses clients/client_inbounds instead of embedded JSON only.
-echo "  Creating subscription clients..."
-if [ "$UUID_MODE" = "2" ]; then
-    XHTTP_CLIENT_PAYLOAD=$(build_client_payload "$CLIENT_EMAIL" "$CLIENT_ID" "$SUB_ID" "" "$XHTTP_ID")
-    XHTTP_CLIENT_RESP=$(xui_json "http://127.0.0.1:2053/panel/api/clients/add" "$XHTTP_CLIENT_PAYLOAD")
-    VISION_CLIENT_PAYLOAD=$(build_client_payload "$CLIENT_EMAIL_VISION" "$CLIENT_ID_VISION" "$SUB_ID_VISION" "xtls-rprx-vision" "$FRONTEND_ID")
-    VISION_CLIENT_RESP=$(xui_json "http://127.0.0.1:2053/panel/api/clients/add" "$VISION_CLIENT_PAYLOAD")
-    CLIENT_RESPONSES="$XHTTP_CLIENT_RESP
-$VISION_CLIENT_RESP"
-else
-    CLIENT_PAYLOAD=$(build_client_payload "$CLIENT_EMAIL" "$CLIENT_ID" "$SUB_ID" "xtls-rprx-vision" "$XHTTP_ID,$FRONTEND_ID")
-    CLIENT_RESPONSES=$(xui_json "http://127.0.0.1:2053/panel/api/clients/add" "$CLIENT_PAYLOAD")
-fi
-if ! echo "$CLIENT_RESPONSES" | jq_all_success; then
+# 2. Create subscription client and attach to XHTTP inbound
+echo "  Creating subscription client..."
+CLIENT_PAYLOAD=$(build_client_payload "$CLIENT_EMAIL" "$CLIENT_ID" "$SUB_ID" "" "$XHTTP_ID")
+CLIENT_RESPONSE=$(xui_json "http://127.0.0.1:2053/panel/api/clients/add" "$CLIENT_PAYLOAD")
+if ! echo "$CLIENT_RESPONSE" | jq_success; then
     echo -e "${R}[ERROR]${N} Subscription client creation failed"
     exit 1
 fi
-echo -e "  ${G}Subscription clients created${N}"
+echo -e "  ${G}Subscription client created${N}"
 
 # 4. Update 3x-ui credentials to user-provided values (if different from defaults)
 if [ "$XUI_USER" != "admin" ] || [ "$XUI_PASS" != "admin" ]; then
@@ -718,7 +617,7 @@ if [ "$XUI_USER" != "admin" ] || [ "$XUI_PASS" != "admin" ]; then
         --arg new_username "$XUI_USER" \
         --arg new_password "$XUI_PASS" \
         '{oldUsername:"admin",oldPassword:"admin",newUsername:$new_username,newPassword:$new_password}')
-    CRED_RESP=$(xui_json "http://127.0.0.1:2053/panel/setting/updateUser" "$CRED_PAYLOAD")
+    CRED_RESP=$(xui_json "http://127.0.0.1:2053/panel/api/setting/updateUser" "$CRED_PAYLOAD")
     if echo "$CRED_RESP" | jq_success; then
         echo -e "  ${G}Credentials updated${N}"
     else
@@ -728,7 +627,7 @@ fi
 
 # 5. Configure subscription and panel settings
 echo "  Configuring panel and subscription settings..."
-ALL_SETTINGS_RESP=$(xui_json "http://127.0.0.1:2053/panel/setting/all" "{}")
+ALL_SETTINGS_RESP=$(xui_json "http://127.0.0.1:2053/panel/api/setting/all" "{}")
 UPDATED_SETTINGS=$(echo "$ALL_SETTINGS_RESP" | jq -c \
     --arg web_base_path "/$ADMIN_PATH/" \
     --arg sub_path "/$SUB_PATH/" \
@@ -738,7 +637,7 @@ UPDATED_SETTINGS=$(echo "$ALL_SETTINGS_RESP" | jq -c \
      | .subEnable = true
      | .subPath = $sub_path
      | .subURI = $sub_uri')
-SETTINGS_RESP=$(xui_json "http://127.0.0.1:2053/panel/setting/update" "$UPDATED_SETTINGS")
+SETTINGS_RESP=$(xui_json "http://127.0.0.1:2053/panel/api/setting/update" "$UPDATED_SETTINGS")
 if echo "$SETTINGS_RESP" | jq_success; then
     echo -e "  ${G}Panel and subscription configured${N}"
 else
@@ -748,7 +647,7 @@ fi
 # 6. Restart panel to apply settings
 echo "  Restarting panel..."
 CSRF=$(csrf_token)
-curl -s --max-time 10 -b "$COOKIE_FILE" -c "$COOKIE_FILE" -X POST "http://127.0.0.1:2053/panel/setting/restartPanel" \
+curl -s --max-time 10 -b "$COOKIE_FILE" -c "$COOKIE_FILE" -X POST "http://127.0.0.1:2053/panel/api/setting/restartPanel" \
     -H "Content-Type: application/json" \
     -H "X-Requested-With: XMLHttpRequest" \
     -H "X-CSRF-Token: $CSRF" \

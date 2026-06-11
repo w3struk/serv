@@ -1,4 +1,4 @@
-# 3x-ui + Caddy + VLESS + XHTTP + TLS — полная схема проксирования
+# 3x-ui + Caddy + VLESS + XHTTP — схема проксирования (XHTTP-only)
 
 ## Настройка сервера
 
@@ -73,28 +73,32 @@ newgrp docker
 
 ## Развёртывание
 
-Скрипт полностью интерактивный. При запуске он запросит домен, предпочтительные логин/пароль для панели и режим работы с подписками.
+Скрипт полностью интерактивный. При запуске он запросит домен и предпочтительные логин/пароль для панели. Подписка XHTTP создаётся автоматически.
 
 ```bash
-cd /opt && git clone https://github.com/w3struk/serv && cd /serv
-
-./setup.sh
+bash <(curl -sL https://raw.githubusercontent.com/w3struk/serv/main/setup.sh)
 ```
 
+Или через wget:
+
+```bash
+bash <(wget -qO- https://raw.githubusercontent.com/w3struk/serv/main/setup.sh)
+```
+
+Скрипт сам склонирует репозиторий в `/opt/serv` и запустит установку.
+
 > [!NOTE]
-> Скрипт запускается от root, так как настраивает BBR и firewall.
+> Скрипт нужно запускать от root, так как настраивает BBR и firewall.
 
 ### Возможности 
 
-- **Создание Inbound'ов:** XHTTP + XTLS-Vision + TLS
+- **Единый Inbound:** Создаётся только VLESS-XHTTP-Backend (UDS, h2c). Публичный TLS завершает Caddy.
 - **Безопасность панели:** Настраивает Basic Auth для панели через Caddy, скрывая ее за случайным путем.
-- **Управление подписками:** Поддерживает два режима генерации подписок на выбор (одна общая ссылка для обоих протоколов или раздельные ссылки).
+- **Управление подписками:** Подписка XHTTP с одним UUID для всех клиентов.
 
 ### Требования к Xray-клиенту
 
-Расширенная XHTTP-обфускация рассчитана на **Xray-core v26.6.1**. Для распространения конфигурации используется обычная VLESS-подписка 3x-ui, а не Clash/Mihomo YAML.
-
-Для 3x-ui v3.2.8 клиенты создаются через нормализованный `clients/add` API. Режим одной подписки использует общий UUID для XHTTP и Vision; режим двух подписок создаёт отдельный UUID для каждого inbound.
+Расширенная XHTTP-обфускация рассчитана на **Xray-core v26.6.1**. Для распространения конфигурации используется обычная VLESS-подписка 3x-ui
 
 В VLESS URI параметры `path`, `host` и `mode` передаются отдельно, `xPaddingBytes` дополнительно доступен как `x_padding_bytes`, а полный набор клиентских XHTTP-полей находится в URL-кодированном JSON-параметре `extra`.
 
@@ -105,27 +109,21 @@ cd /opt && git clone https://github.com/w3struk/serv && cd /serv
        │
        │ TLS :443
        ▼
-┌────────────────────────────────────────┐
-│ 3x-ui  VLESS-TCP-Vision  (inbound 443) │
-│  settings.fallbacks:                   │
-│    [{dest: "@caddy_fallback", xver: 2}]│
-└────────────────────────────────────────┘
-       │ PROXY v2 (real client IP)
-       ▼
-┌────────────────────────────────────────┐
-│ Caddy  :8080  bind unix/@caddy_fallback│
-│   /admin-vkl8/* → 3x-ui panel :2053    │
-│   /sub-t40c/*   → subconverter :2096   │
-│   /api/v592/*   → XHTTP  (h2c+PROXYv2) │
-└────────────────────────────────────────┘
-       │ PROXY v2 (real client IP)
-       ▼
-┌────────────────────────────────────────┐
-│ 3x-ui  VLESS-XHTTP-Backend             │
-│  streamSettings.sockopt:               │
-│    acceptProxyProtocol: true           │
-│  listen: @uds_xhttp  (UDS, h2c)        │
-└────────────────────────────────────────┘
+┌──────────────────────────────────────────────┐
+│ Caddy  (public TLS termination)              │
+│   /admin-xxxx/* → 3x-ui panel      :2053     │
+│   /sub-xxxx/*   → 3x-ui sub service :2096    │
+│   /api/vXXX/*   → XHTTP  (h2c+PROXYv2, UDS)  │
+└─────────────────────┬────────────────────────┘
+                      │ PROXY v2 (real client IP)
+                      ▼
+┌──────────────────────────────────────────────┐
+│ 3x-ui  VLESS-XHTTP-Backend (inbound only)    │
+│  streamSettings.sockopt:                     │
+│    acceptProxyProtocol: true                  │
+│  listen: @uds_xhttp  (Unix Domain Socket)    │
+│  network: xhttp, mode: auto                  │
+└──────────────────────────────────────────────┘
 ```
 
 ## Управление и Полезные команды
@@ -133,10 +131,11 @@ cd /opt && git clone https://github.com/w3struk/serv && cd /serv
 Скрипт `setup.sh` предоставляет несколько встроенных команд:
 
 ```bash
-./setup.sh              # Первоначальная установка (интерактивный режим)
-./setup.sh add-client   # Добавление нового клиента к существующей установке
-./setup.sh status       # Просмотр статуса контейнеров, ссылок, путей и портов
-./setup.sh help         # Справка по командами скрипта
+./setup.sh                  # Первоначальная установка (интерактивный режим)
+./setup.sh add-client       # Добавление нового клиента к существующей установке
+./setup.sh status           # Просмотр статуса контейнеров, ссылок, путей и портов
+./setup.sh cleanup-vision   # Удаление устаревшего VLESS-TCP-Vision-Frontend
+./setup.sh help             # Справка по командами скрипта
 ```
 
 **Работа с Docker:**
