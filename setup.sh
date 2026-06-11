@@ -613,6 +613,12 @@ echo -e "  ${G}Subscription client created${N}"
 # 4. Configure subscription and panel settings (before credential change, session still valid)
 echo "  Configuring panel and subscription settings..."
 ALL_SETTINGS_RESP=$(xui_json "http://127.0.0.1:2053/panel/api/setting/all" "{}")
+if ! echo "$ALL_SETTINGS_RESP" | jq_success; then
+    MSG=$(echo "$ALL_SETTINGS_RESP" | jq -r '.msg // "unknown error"' 2>/dev/null)
+    echo -e "${R}[ERROR]${N} Failed to fetch current settings: $MSG"
+    rm "$COOKIE_FILE"
+    exit 1
+fi
 UPDATED_SETTINGS=$(echo "$ALL_SETTINGS_RESP" | jq -c \
     --arg web_base_path "/$ADMIN_PATH/" \
     --arg sub_path "/$SUB_PATH/" \
@@ -626,7 +632,8 @@ SETTINGS_RESP=$(xui_json "http://127.0.0.1:2053/panel/api/setting/update" "$UPDA
 if echo "$SETTINGS_RESP" | jq_success; then
     echo -e "  ${G}Panel and subscription configured${N}"
 else
-    echo -e "${Y}Warning:${N} Failed to configure panel settings"
+    MSG=$(echo "$SETTINGS_RESP" | jq -r '.msg // "unknown error"' 2>/dev/null)
+    echo -e "${Y}Warning:${N} Failed to configure panel settings ($MSG)"
 fi
 
 # 5. Update 3x-ui credentials to user-provided values (if different from defaults)
@@ -639,8 +646,13 @@ if [ "$XUI_USER" != "admin" ] || [ "$XUI_PASS" != "admin" ]; then
     CRED_RESP=$(xui_json "http://127.0.0.1:2053/panel/api/setting/updateUser" "$CRED_PAYLOAD")
     if echo "$CRED_RESP" | jq_success; then
         echo -e "  ${G}Credentials updated${N}"
+        # Re-login with new credentials so restart call below uses a valid session
+        if ! xui_login "$XUI_USER" "$XUI_PASS"; then
+            echo -e "${Y}Warning:${N} Re-login after credential change failed"
+        fi
     else
-        echo -e "${Y}Warning:${N} Failed to update credentials"
+        MSG=$(echo "$CRED_RESP" | jq -r '.msg // "unknown error"' 2>/dev/null)
+        echo -e "${Y}Warning:${N} Failed to update credentials ($MSG)"
     fi
 fi
 
