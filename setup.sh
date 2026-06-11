@@ -140,7 +140,7 @@ build_xhttp_payload() {
             {
                 path: $path,
                 mode: "auto",
-                headers: {"User-Agent": "!chrome"}
+                headers: {"User-Agent": "chrome"}
             } + if $advanced_obfs == "true" then {
                 xPaddingObfsMode: true,
                 xPaddingBytes: "100-1000",
@@ -167,7 +167,7 @@ build_xhttp_payload() {
             streamSettings: ({
                 network: "xhttp",
                 security: "none",
-                sockopt: {acceptProxyProtocol: true},
+                sockopt: {acceptProxyProtocol: true, trustedXForwardedFor: "127.0.0.1/32"},
                 externalProxy: [{
                     dest: $domain,
                     port: 443,
@@ -619,15 +619,20 @@ if ! echo "$ALL_SETTINGS_RESP" | jq_success; then
     rm "$COOKIE_FILE"
     exit 1
 fi
+XHTTP_XMUX='{"maxConcurrency":1,"maxConnections":8,"cMaxReuseTimes":256,"cMaxAlive":0}'
+
 UPDATED_SETTINGS=$(echo "$ALL_SETTINGS_RESP" | jq -c \
     --arg web_base_path "/$ADMIN_PATH/" \
     --arg sub_path "/$SUB_PATH/" \
     --arg sub_uri "https://$DOMAIN/$SUB_PATH/" \
+    --arg sub_json_mux "$XHTTP_XMUX" \
     '.obj
      | .webBasePath = $web_base_path
      | .subEnable = true
      | .subPath = $sub_path
-     | .subURI = $sub_uri')
+     | .subURI = $sub_uri
+     | .subJsonEnable = true
+     | .subJsonMux = $sub_json_mux')
 SETTINGS_RESP=$(xui_json "http://127.0.0.1:2053/panel/api/setting/update" "$UPDATED_SETTINGS")
 if echo "$SETTINGS_RESP" | jq_success; then
     echo -e "  ${G}Panel and subscription configured${N}"
@@ -657,6 +662,8 @@ if [ "$XUI_USER" != "admin" ] || [ "$XUI_PASS" != "admin" ]; then
 fi
 
 # 6. Restart panel to apply settings
+echo "  Checkpointing DB WAL..."
+sqlite3 /opt/serv/3x-ui/db/x-ui.db "PRAGMA wal_checkpoint;" 2>/dev/null || true
 echo "  Restarting panel..."
 CSRF=$(csrf_token)
 curl -s --max-time 10 -b "$COOKIE_FILE" -c "$COOKIE_FILE" -X POST "http://127.0.0.1:2053/panel/api/setting/restartPanel" \
