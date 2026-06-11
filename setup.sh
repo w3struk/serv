@@ -610,22 +610,7 @@ if ! echo "$CLIENT_RESPONSE" | jq_success; then
 fi
 echo -e "  ${G}Subscription client created${N}"
 
-# 4. Update 3x-ui credentials to user-provided values (if different from defaults)
-if [ "$XUI_USER" != "admin" ] || [ "$XUI_PASS" != "admin" ]; then
-    echo "  Updating 3x-ui credentials..."
-    CRED_PAYLOAD=$(jq -nc \
-        --arg new_username "$XUI_USER" \
-        --arg new_password "$XUI_PASS" \
-        '{oldUsername:"admin",oldPassword:"admin",newUsername:$new_username,newPassword:$new_password}')
-    CRED_RESP=$(xui_json "http://127.0.0.1:2053/panel/api/setting/updateUser" "$CRED_PAYLOAD")
-    if echo "$CRED_RESP" | jq_success; then
-        echo -e "  ${G}Credentials updated${N}"
-    else
-        echo -e "${Y}Warning:${N} Failed to update credentials"
-    fi
-fi
-
-# 5. Configure subscription and panel settings
+# 4. Configure subscription and panel settings (before credential change, session still valid)
 echo "  Configuring panel and subscription settings..."
 ALL_SETTINGS_RESP=$(xui_json "http://127.0.0.1:2053/panel/api/setting/all" "{}")
 UPDATED_SETTINGS=$(echo "$ALL_SETTINGS_RESP" | jq -c \
@@ -642,6 +627,21 @@ if echo "$SETTINGS_RESP" | jq_success; then
     echo -e "  ${G}Panel and subscription configured${N}"
 else
     echo -e "${Y}Warning:${N} Failed to configure panel settings"
+fi
+
+# 5. Update 3x-ui credentials to user-provided values (if different from defaults)
+if [ "$XUI_USER" != "admin" ] || [ "$XUI_PASS" != "admin" ]; then
+    echo "  Updating 3x-ui credentials..."
+    CRED_PAYLOAD=$(jq -nc \
+        --arg new_username "$XUI_USER" \
+        --arg new_password "$XUI_PASS" \
+        '{oldUsername:"admin",oldPassword:"admin",newUsername:$new_username,newPassword:$new_password}')
+    CRED_RESP=$(xui_json "http://127.0.0.1:2053/panel/api/setting/updateUser" "$CRED_PAYLOAD")
+    if echo "$CRED_RESP" | jq_success; then
+        echo -e "  ${G}Credentials updated${N}"
+    else
+        echo -e "${Y}Warning:${N} Failed to update credentials"
+    fi
 fi
 
 # 6. Restart panel to apply settings
