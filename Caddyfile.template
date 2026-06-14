@@ -30,6 +30,10 @@ $DOMAIN {
         reverse_proxy 127.0.0.1:2096
     }
 
+    handle /$JSON_PATH/* {
+        reverse_proxy 127.0.0.1:2096
+    }
+
     handle /$XHTTP_PATH/* {
         reverse_proxy unix/@uds_xhttp {
             flush_interval -1

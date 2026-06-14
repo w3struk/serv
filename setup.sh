@@ -167,7 +167,7 @@ build_xhttp_payload() {
             streamSettings: ({
                 network: "xhttp",
                 security: "none",
-                sockopt: {acceptProxyProtocol: true, trustedXForwardedFor: "127.0.0.1/32"},
+                sockopt: {acceptProxyProtocol: true, trustedXForwardedFor: ["127.0.0.1/32"]},
                 externalProxy: [{
                     dest: $domain,
                     port: 443,
@@ -489,6 +489,7 @@ echo ""
 
 ADMIN_PATH="admin-$(head -c 8 /dev/urandom | base64 | tr -dc 'a-z0-9' | head -c 8)"
 SUB_PATH="sub-$(head -c 8 /dev/urandom | base64 | tr -dc 'a-z0-9' | head -c 8)"
+JSON_PATH="json-$(head -c 8 /dev/urandom | base64 | tr -dc 'a-z0-9' | head -c 8)"
 XHTTP_PATH="api/v$(shuf -i 1-999 -n 1)"
 
 CLIENT_ID=$(cat /proc/sys/kernel/random/uuid)
@@ -500,6 +501,7 @@ echo -e "${G}=== Configuration Summary ===${N}"
 echo -e "${Y}Domain:${N}      ${C}$DOMAIN${N}"
 echo -e "${Y}Admin path:${N}  /$ADMIN_PATH/"
 echo -e "${Y}Sub path:${N}    /$SUB_PATH/"
+echo -e "${Y}JSON path:${N}    /$JSON_PATH/"
 echo -e "${Y}XHTTP path:${N}  /$XHTTP_PATH/"
 echo -e "${Y}XHTTP UUID:${N}  ${C}$CLIENT_ID${N}"
 echo -e "${Y}Advanced XHTTP padding:${N} $XHTTP_ADVANCED_OBFS"
@@ -527,6 +529,7 @@ cp "$SERVER_DIR/Caddyfile.template" "$SERVER_DIR/Caddyfile"
 sed -i "s|\$DOMAIN|$DOMAIN|g" "$SERVER_DIR/Caddyfile"
 sed -i "s|\$ADMIN_PATH|$ADMIN_PATH|g" "$SERVER_DIR/Caddyfile"
 sed -i "s|\$SUB_PATH|$SUB_PATH|g" "$SERVER_DIR/Caddyfile"
+sed -i "s|\$JSON_PATH|$JSON_PATH|g" "$SERVER_DIR/Caddyfile"
 sed -i "s|\$XHTTP_PATH|$XHTTP_PATH|g" "$SERVER_DIR/Caddyfile"
 echo -e "  ${G}Domain and paths updated${N}"
 
@@ -624,7 +627,9 @@ XHTTP_XMUX='{"maxConcurrency":1,"maxConnections":8,"cMaxReuseTimes":256,"cMaxAli
 UPDATED_SETTINGS=$(echo "$ALL_SETTINGS_RESP" | jq -c \
     --arg web_base_path "/$ADMIN_PATH/" \
     --arg sub_path "/$SUB_PATH/" \
+    --arg json_path "/$JSON_PATH/" \
     --arg sub_uri "https://$DOMAIN/$SUB_PATH/" \
+    --arg sub_json_uri "https://$DOMAIN/$JSON_PATH/" \
     --arg sub_json_mux "$XHTTP_XMUX" \
     '.obj
      | .webBasePath = $web_base_path
@@ -632,6 +637,8 @@ UPDATED_SETTINGS=$(echo "$ALL_SETTINGS_RESP" | jq -c \
      | .subPath = $sub_path
      | .subURI = $sub_uri
      | .subJsonEnable = true
+     | .subJsonPath = $json_path
+     | .subJsonURI = $sub_json_uri
      | .subJsonMux = $sub_json_mux')
 SETTINGS_RESP=$(xui_json "http://127.0.0.1:2053/panel/api/setting/update" "$UPDATED_SETTINGS")
 if echo "$SETTINGS_RESP" | jq_success; then

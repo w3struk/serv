@@ -158,6 +158,7 @@ watch -n 1 'ss -Htn state established | wc -l' #количество актив�
 - [Akiyamov](https://github.com/Akiyamov/xray-vps-setup)
 - [MHSanaei](https://github.com/MHSanaei/3x-ui)
 - [API 3x-ui](https://documenter.getpostman.com/view/5146551/2sBXwnsBko)
-- [NotDev](https://github.com/EikeiDev/vless-xtls-converter)
 - [lxhao61](https://github.com/lxhao61/integrated-examples)
 - [Xray-core v26.6.1](https://github.com/XTLS/Xray-core/releases/tag/v26.6.1)
+- [NotDev](https://github.com/EikeiDev/vless-xtls-converter)
+
