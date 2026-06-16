@@ -143,7 +143,12 @@ build_xhttp_payload() {
                 headers: {"User-Agent": "chrome"},
                 xPaddingBytes: "100-1000",
                 scMaxEachPostBytes: "100000-500000",
-                scMinPostsIntervalMs: "50-150"
+                scMinPostsIntervalMs: "50-150",
+                xmux: {
+                    maxConcurrency: "16-32",
+                    hMaxRequestTimes: "600-900",
+                    hMaxReusableSecs: "1800-3000"
+                }
             } + if $advanced_obfs == "true" then {
                 xPaddingObfsMode: true,
                 xPaddingKey: "trace",
@@ -634,8 +639,6 @@ if ! echo "$ALL_SETTINGS_RESP" | jq_success; then
     rm "$COOKIE_FILE"
     exit 1
 fi
-XHTTP_XMUX='{"maxConcurrency":1,"maxConnections":8,"cMaxReuseTimes":256,"cMaxAlive":0}'
-
 UPDATED_SETTINGS=$(echo "$ALL_SETTINGS_RESP" | jq -c \
     --arg web_base_path "/$ADMIN_PATH/" \
     --arg sub_path "/$SUB_PATH/" \
@@ -644,7 +647,6 @@ UPDATED_SETTINGS=$(echo "$ALL_SETTINGS_RESP" | jq -c \
     --arg sub_uri "https://$DOMAIN/$SUB_PATH/" \
     --arg sub_json_uri "https://$DOMAIN/$JSON_PATH/" \
     --arg sub_clash_uri "https://$DOMAIN/$CLASH_PATH/" \
-    --arg sub_json_mux "$XHTTP_XMUX" \
     '.obj
      | .webBasePath = $web_base_path
      | .subEnable = true
@@ -653,7 +655,7 @@ UPDATED_SETTINGS=$(echo "$ALL_SETTINGS_RESP" | jq -c \
      | .subJsonEnable = true
      | .subJsonPath = $json_path
      | .subJsonURI = $sub_json_uri
-     | .subJsonMux = $sub_json_mux
+     | .subJsonMux = ""
      | .subClashEnable = true
      | .subClashPath = $clash_path
      | .subClashURI = $sub_clash_uri')
