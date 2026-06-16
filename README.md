@@ -94,7 +94,7 @@ bash <(wget -qO- https://raw.githubusercontent.com/w3struk/serv/main/setup.sh)
 
 - **Единый Inbound:** Создаётся только VLESS-XHTTP-Backend (UDS, h2c). Публичный TLS завершает Caddy.
 - **Безопасность панели:** Настраивает Basic Auth для панели через Caddy, скрывая ее за случайным путем.
-- **Управление подписками:** Подписка XHTTP с одним UUID для всех клиентов.
+- **Управление подписками:** Подписка XHTTP с одним UUID для всех клиентов. Автоматически включаются VLESS, JSON и Clash/Mihomo форматы.
 
 ### Требования к Xray-клиенту
 
@@ -113,6 +113,8 @@ bash <(wget -qO- https://raw.githubusercontent.com/w3struk/serv/main/setup.sh)
 │ Caddy  (public TLS termination)              │
 │   /admin-xxxx/* → 3x-ui panel      :2053     │
 │   /sub-xxxx/*   → 3x-ui sub service :2096    │
+│   /json-xxxx/*  → 3x-ui sub service :2096    │
+│   /clash-xxxx/* → 3x-ui sub service :2096    │
 │   /api/vXXX/*   → XHTTP  (h2c+PROXYv2, UDS)  │
 └─────────────────────┬────────────────────────┘
                       │ PROXY v2 (real client IP)
@@ -134,7 +136,6 @@ bash <(wget -qO- https://raw.githubusercontent.com/w3struk/serv/main/setup.sh)
 ./setup.sh                  # Первоначальная установка (интерактивный режим)
 ./setup.sh add-client       # Добавление нового клиента к существующей установке
 ./setup.sh status           # Просмотр статуса контейнеров, ссылок, путей и портов
-./setup.sh cleanup-vision   # Удаление устаревшего VLESS-TCP-Vision-Frontend
 ./setup.sh help             # Справка по командами скрипта
 ```
 

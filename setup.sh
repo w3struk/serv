@@ -140,10 +140,12 @@ build_xhttp_payload() {
             {
                 path: $path,
                 mode: "auto",
-                headers: {"User-Agent": "chrome"}
+                headers: {"User-Agent": "chrome"},
+                xPaddingBytes: "100-1000",
+                scMaxEachPostBytes: "100000-500000",
+                scMinPostsIntervalMs: "50-150"
             } + if $advanced_obfs == "true" then {
                 xPaddingObfsMode: true,
-                xPaddingBytes: "100-1000",
                 xPaddingKey: "trace",
                 xPaddingHeader: "X-Trace-ID",
                 xPaddingPlacement: "queryInHeader",
@@ -237,7 +239,9 @@ print_summary() {
     echo ""
     if [ -n "${SUB_ID:+x}" ]; then
         echo -e "${B}XHTTP Subscription:${N}"
-        echo -e "  ${C}Link:${N} https://${C}$DOMAIN${N}/$SUB_PATH/$SUB_ID"
+        echo -e "  ${C}VLESS:${N} https://${C}$DOMAIN${N}/$SUB_PATH/$SUB_ID"
+        echo -e "  ${C}JSON:${N}  https://${C}$DOMAIN${N}/$JSON_PATH/$SUB_ID"
+        echo -e "  ${C}Clash:${N} https://${C}$DOMAIN${N}/$CLASH_PATH/$SUB_ID"
         echo ""
     fi
     echo -e "${B}Credentials:${N}"
@@ -328,8 +332,10 @@ add_client() {
     echo -e "${G}╚══════════════════════════════════════╝${N}"
     echo ""
     SUB_PATH=$(sqlite3 /opt/serv/3x-ui/db/x-ui.db "SELECT value FROM settings WHERE key='subPath' LIMIT 1;" 2>/dev/null || echo "/sub/")
-    echo -e "${B}XHTTP Subscription link:${N}"
-    echo -e "  ${C}Link:${N} https://${C}${DOMAIN}${N}${SUB_PATH}${SID}  (${EMAIL})"
+    CLASH_PATH=$(sqlite3 /opt/serv/3x-ui/db/x-ui.db "SELECT value FROM settings WHERE key='subClashPath' LIMIT 1;" 2>/dev/null || echo "/clash/")
+    echo -e "${B}XHTTP Subscription links:${N}"
+    echo -e "  ${C}VLESS:${N} https://${C}${DOMAIN}${N}${SUB_PATH}${SID}  (${EMAIL})"
+    echo -e "  ${C}Clash:${N} https://${C}${DOMAIN}${N}${CLASH_PATH}${SID}  (${EMAIL})"
     echo ""
     echo -e "${B}XHTTP UUID:${N} ${C}$CID${N}"
 
@@ -352,12 +358,16 @@ show_status() {
     local DOMAIN=""
     local ADMIN_PATH=""
     local SUB_PATH=""
+    local JSON_PATH=""
+    local CLASH_PATH=""
     local XHTTP_PATH=""
 
     # Read config from Caddyfile
     if [ -f "$SERVER_DIR/Caddyfile" ]; then
         ADMIN_PATH=$(grep -oP 'handle /admin-\w+' "$SERVER_DIR/Caddyfile" | head -1 | sed 's/handle \///')
         SUB_PATH=$(grep -oP 'handle /sub-\w+' "$SERVER_DIR/Caddyfile" | head -1 | sed 's/handle \///')
+        JSON_PATH=$(grep -oP 'handle /json[^/]*' "$SERVER_DIR/Caddyfile" | head -1 | sed 's/handle \///')
+        CLASH_PATH=$(grep -oP 'handle /clash[^/]*' "$SERVER_DIR/Caddyfile" | head -1 | sed 's/handle \///')
         DOMAIN=$(sed -n '/redir/p' "$SERVER_DIR/Caddyfile" | grep -oP 'https://\K[^{}]+' | head -1 | sed 's/{uri} permanent//')
     fi
 
@@ -367,6 +377,8 @@ show_status() {
         echo -e "${B}URLs:${N}"
         [ -n "$ADMIN_PATH" ] && echo -e "  ${C}Panel:${N} https://$DOMAIN/$ADMIN_PATH/"
         [ -n "$SUB_PATH" ]   && echo -e "  ${C}Sub:${N}   https://$DOMAIN/$SUB_PATH/"
+        [ -n "$JSON_PATH" ]  && echo -e "  ${C}JSON:${N}  https://$DOMAIN/$JSON_PATH/"
+        [ -n "$CLASH_PATH" ] && echo -e "  ${C}Clash:${N} https://$DOMAIN/$CLASH_PATH/"
     fi
 
     echo ""
@@ -490,6 +502,7 @@ echo ""
 ADMIN_PATH="admin-$(head -c 8 /dev/urandom | base64 | tr -dc 'a-z0-9' | head -c 8)"
 SUB_PATH="sub-$(head -c 8 /dev/urandom | base64 | tr -dc 'a-z0-9' | head -c 8)"
 JSON_PATH="json-$(head -c 8 /dev/urandom | base64 | tr -dc 'a-z0-9' | head -c 8)"
+CLASH_PATH="clash-$(head -c 8 /dev/urandom | base64 | tr -dc 'a-z0-9' | head -c 8)"
 XHTTP_PATH="api/v$(shuf -i 1-999 -n 1)"
 
 CLIENT_ID=$(cat /proc/sys/kernel/random/uuid)
@@ -501,7 +514,8 @@ echo -e "${G}=== Configuration Summary ===${N}"
 echo -e "${Y}Domain:${N}      ${C}$DOMAIN${N}"
 echo -e "${Y}Admin path:${N}  /$ADMIN_PATH/"
 echo -e "${Y}Sub path:${N}    /$SUB_PATH/"
-echo -e "${Y}JSON path:${N}    /$JSON_PATH/"
+echo -e "${Y}JSON path:${N}   /$JSON_PATH/"
+echo -e "${Y}Clash path:${N}  /$CLASH_PATH/"
 echo -e "${Y}XHTTP path:${N}  /$XHTTP_PATH/"
 echo -e "${Y}XHTTP UUID:${N}  ${C}$CLIENT_ID${N}"
 echo -e "${Y}Advanced XHTTP padding:${N} $XHTTP_ADVANCED_OBFS"
@@ -530,6 +544,7 @@ sed -i "s|\$DOMAIN|$DOMAIN|g" "$SERVER_DIR/Caddyfile"
 sed -i "s|\$ADMIN_PATH|$ADMIN_PATH|g" "$SERVER_DIR/Caddyfile"
 sed -i "s|\$SUB_PATH|$SUB_PATH|g" "$SERVER_DIR/Caddyfile"
 sed -i "s|\$JSON_PATH|$JSON_PATH|g" "$SERVER_DIR/Caddyfile"
+sed -i "s|\$CLASH_PATH|$CLASH_PATH|g" "$SERVER_DIR/Caddyfile"
 sed -i "s|\$XHTTP_PATH|$XHTTP_PATH|g" "$SERVER_DIR/Caddyfile"
 echo -e "  ${G}Domain and paths updated${N}"
 
@@ -628,8 +643,10 @@ UPDATED_SETTINGS=$(echo "$ALL_SETTINGS_RESP" | jq -c \
     --arg web_base_path "/$ADMIN_PATH/" \
     --arg sub_path "/$SUB_PATH/" \
     --arg json_path "/$JSON_PATH/" \
+    --arg clash_path "/$CLASH_PATH/" \
     --arg sub_uri "https://$DOMAIN/$SUB_PATH/" \
     --arg sub_json_uri "https://$DOMAIN/$JSON_PATH/" \
+    --arg sub_clash_uri "https://$DOMAIN/$CLASH_PATH/" \
     --arg sub_json_mux "$XHTTP_XMUX" \
     '.obj
      | .webBasePath = $web_base_path
@@ -639,7 +656,10 @@ UPDATED_SETTINGS=$(echo "$ALL_SETTINGS_RESP" | jq -c \
      | .subJsonEnable = true
      | .subJsonPath = $json_path
      | .subJsonURI = $sub_json_uri
-     | .subJsonMux = $sub_json_mux')
+     | .subJsonMux = $sub_json_mux
+     | .subClashEnable = true
+     | .subClashPath = $clash_path
+     | .subClashURI = $sub_clash_uri')
 SETTINGS_RESP=$(xui_json "http://127.0.0.1:2053/panel/api/setting/update" "$UPDATED_SETTINGS")
 if echo "$SETTINGS_RESP" | jq_success; then
     echo -e "  ${G}Panel and subscription configured${N}"

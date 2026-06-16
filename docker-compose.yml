@@ -15,7 +15,6 @@ services:
         network_mode: host
         volumes:
             - ./3x-ui/db/:/etc/x-ui/
-            - ./caddy/data/caddy/certificates:/etc/x-ui/certs:ro
         environment:
             XRAY_VMESS_AEAD_FORCED: "false"
             XUI_ENABLE_FAIL2BAN: "true"
