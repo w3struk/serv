@@ -159,7 +159,7 @@ build_xhttp_payload() {
             enable: true,
             expiryTime: 0,
             listen: "@uds_xhttp",
-            port: 2023,
+            port: 0,
             protocol: "vless",
             settings: ({
                 clients: [],
@@ -294,10 +294,7 @@ add_client() {
         local csrf; csrf=$(csrf_token)
         local resp; resp=$(curl -s --max-time 5 -b "$COOKIE_FILE" "http://127.0.0.1:2053${API_PREFIX}/panel/api/inbounds/list" \
             -H "X-Requested-With: XMLHttpRequest" -H "X-CSRF-Token: $csrf")
-        ID_XHTTP=$(echo "$resp" | jq -r '.obj[]? | select(.port == 2023) | .id' 2>/dev/null | head -1)
-        if [ -z "$ID_XHTTP" ]; then
-            ID_XHTTP=$(echo "$resp" | jq -r '.obj[]? | select(.remark == "VLESS-XHTTP-Backend") | .id' 2>/dev/null | head -1)
-        fi
+        ID_XHTTP=$(echo "$resp" | jq -r '.obj[]? | select(.remark == "VLESS-XHTTP-Backend") | .id' 2>/dev/null | head -1)
     }
 
     gen_email() {
@@ -306,7 +303,7 @@ add_client() {
 
     get_inbound_ids
     if [ -z "$ID_XHTTP" ]; then
-        echo -e "${R}[ERROR]${N} XHTTP inbound (port 2023 / remark VLESS-XHTTP-Backend) was not found"
+        echo -e "${R}[ERROR]${N} XHTTP inbound (remark VLESS-XHTTP-Backend) was not found"
         rm "$COOKIE_FILE"
         exit 1
     fi
@@ -608,7 +605,7 @@ if ! xui_login "admin" "admin"; then
     exit 1
 fi
 
-# 1. Add XHTTP Backend (Port 2023)
+# 1. Add XHTTP Backend (UDS @uds_xhttp, port 0)
 echo "  Adding XHTTP Backend inbound..."
 XHTTP_PAYLOAD=$(build_xhttp_payload "$DOMAIN" "$XHTTP_PATH" "$XHTTP_ADVANCED_OBFS")
 XHTTP_RESP=$(xui_json "http://127.0.0.1:2053/panel/api/inbounds/add" "$XHTTP_PAYLOAD") || true
