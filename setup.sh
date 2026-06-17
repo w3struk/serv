@@ -139,7 +139,7 @@ build_xhttp_payload() {
         def xhttp_settings:
             {
                 path: $path,
-                mode: "auto",
+                mode: "stream-up",
                 headers: {"User-Agent": "chrome"},
                 xPaddingBytes: "100-1000",
                 scMaxEachPostBytes: "100000-500000",

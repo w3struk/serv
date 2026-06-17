@@ -110,18 +110,19 @@ bash <(wget -qO- https://raw.githubusercontent.com/w3struk/serv/main/setup.sh)
 |---|---|---|
 | `path`, `host`, `mode` | Оба | Сервер проверяет, клиент отправляет |
 | `xPadding*` (6 полей) | Оба | Сервер валидирует, клиент генерирует |
-| `scMaxEachPostBytes` | Оба | Макс. объём данных в одном POST-запросе. Default: 1000000 (1 МБ). Должно быть меньше лимита CDN/Middlebox. Сервер отклоняет POST > лимита, клиент ограничивает размер |
-| `scMinPostsIntervalMs` | Только клиент | Мин. интервал между POST-запросами для одного прокси-соединения. Default: 30 мс — **DPI-фингерпринт!** Используйте диапазон типа `"50-150"` |
+| `scMaxEachPostBytes` | Оба | Макс. объём данных в одном POST-запросе. Default: 1000000 (1 МБ). Должно быть меньше лимита CDN/Middlebox. Сервер отклоняет POST > лимита, клиент ограничивает размер. Диапазон `"100000-500000"` снижает фингерпринт |
+| `scMinPostsIntervalMs` | Только клиент | Мин. интервал между POST-запросами для одного прокси-соединения. Default: 30 мс — **DPI-фингерпринт!** Используйте диапазон `"50-150"`. Применяется только в режимах `packet-up` и `auto` (auto+TLS → packet-up) |
 | `scMaxBufferedPosts` | Только сервер | Макс. количество буферизованных POST-запросов на одно прокси-соединение. Default: 30. При превышении соединение разрывается |
 | `scStreamUpServerSecs` | Только сервер | Keepalive padding в stream-up (default: "20-80") |
 | `serverMaxHeaderBytes` | Только сервер | Лимит размера заголовков (default: 8192) |
 | `noSSEHeader` | Только сервер | Подавляет SSE-заголовок в ответе |
-| `scMinPostsIntervalMs` | Только клиент | Пауза между POST (default: 30 — DPI-фингерпринт!) |
-| `xmux` | Только клиент | Мультиплексирование H2/H3 |
+| `xmux` | Только клиент | Мультиплексирование H2/H3. Критично заполнять все три ключевых поля (см. ниже) |
 | `downloadSettings` | Только клиент | Разделение upstream/downstream |
 | `headers` | Только клиент | Произвольные заголовки запроса |
 | `noGRPCHeader` | Только клиент | Подавляет маскировку под gRPC |
 | `uplinkChunkSize` | Только клиент | Размер чанка при размещении в header/cookie |
+
+> ⚠️ **`mode: "auto"` на клиенте:** при TLS-соединении auto разрешается в `packet-up` (а не в `stream-up`, как утверждается в документации xray). При REALITY — в `stream-one`. Серверный `auto` принимает все три режима. Мы используем явный `stream-up` на сервере, чтобы избежать путаницы.
 
 ### XMUX: критическое правило заполнения
 
@@ -157,8 +158,8 @@ bash <(wget -qO- https://raw.githubusercontent.com/w3struk/serv/main/setup.sh)
 │  streamSettings.sockopt:                     │
 │    acceptProxyProtocol: true                  │
 │  listen: @uds_xhttp  (Unix Domain Socket)    │
-│  network: xhttp, mode: auto                  │
-│  xmux: maxConcurrency=16-32, hMaxReq=600-900 │
+│  network: xhttp, mode: stream-up              │
+│  xmux: maxConcurrency=16-32, hMaxReq=600-900  │
 │        hMaxReusableSecs=1800-3000             │
 └──────────────────────────────────────────────┘
 ```
