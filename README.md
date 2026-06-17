@@ -106,21 +106,33 @@ bash <(wget -qO- https://raw.githubusercontent.com/w3struk/serv/main/setup.sh)
 
 3x-ui хранит все параметры XHTTP в inbound для передачи клиентам через подписки. `StripInboundXhttpClientFields` вырезает клиентские поля перед отправкой в xray-core runtime — сервер их не видит, но подписки их получают.
 
-| Параметр | Сторона | Описание |
-|---|---|---|
-| `path`, `host`, `mode` | Оба | Сервер проверяет, клиент отправляет |
-| `xPadding*` (6 полей) | Оба | Сервер валидирует, клиент генерирует |
-| `scMaxEachPostBytes` | Оба | Макс. объём данных в одном POST-запросе. Default: 1000000 (1 МБ). Должно быть меньше лимита CDN/Middlebox. Сервер отклоняет POST > лимита, клиент ограничивает размер. Диапазон `"100000-500000"` снижает фингерпринт |
-| `scMinPostsIntervalMs` | Только клиент | Мин. интервал между POST-запросами для одного прокси-соединения. Default: 30 мс — **DPI-фингерпринт!** Используйте диапазон `"50-150"`. Применяется только в режимах `packet-up` и `auto` (auto+TLS → packet-up) |
-| `scMaxBufferedPosts` | Только сервер | Макс. количество буферизованных POST-запросов на одно прокси-соединение. Default: 30. При превышении соединение разрывается |
-| `scStreamUpServerSecs` | Только сервер | Keepalive padding в stream-up (default: "20-80") |
-| `serverMaxHeaderBytes` | Только сервер | Лимит размера заголовков (default: 8192) |
-| `noSSEHeader` | Только сервер | Подавляет SSE-заголовок в ответе |
-| `xmux` | Только клиент | Мультиплексирование H2/H3. Критично заполнять все три ключевых поля (см. ниже) |
-| `downloadSettings` | Только клиент | Разделение upstream/downstream |
-| `headers` | Только клиент | Произвольные заголовки запроса |
-| `noGRPCHeader` | Только клиент | Подавляет маскировку под gRPC |
-| `uplinkChunkSize` | Только клиент | Размер чанка при размещении в header/cookie |
+| Параметр | Сторона | Режимы | 3x-ui UI | Описание |
+|---|---|---|---|---|
+| `path`, `host`, `mode` | Оба | Все | Path, Host, Mode | Сервер проверяет, клиент отправляет |
+| `xPaddingBytes` | Оба | Все | Padding Bytes | Размер случайного padding (диапазон, default: `"100-1000"`) |
+| `xPaddingObfsMode` | Оба | Все | Padding Obfs Mode | Включает обфускацию padding (bool) |
+| `xPaddingKey` | Оба | Все | Padding Key | Ключ обфускации (при включённом obfsMode) |
+| `xPaddingHeader` | Оба | Все | Padding Header | Имя заголовка для padding |
+| `xPaddingPlacement` | Оба | Все | Padding Placement | Размещение padding: `queryInHeader`, `header`, `cookie`, `query` |
+| `xPaddingMethod` | Оба | Все | Padding Method | Метод обфускации: `repeat-x`, `tokenish` |
+| `scMaxEachPostBytes` | Оба | Все | Max Upload Size (Byte) | Макс. объём данных в одном POST. Default: 1000000 (1 МБ). Диапазон `"100000-500000"` снижает фингерпринт |
+| `scMinPostsIntervalMs` | Клиент | packet-up, auto | Min upload interval (ms) | Мин. интервал между POST. Default: 30 мс — **DPI-фингерпринт!** Используйте `"50-150"` |
+| `scMaxBufferedPosts` | Сервер | packet-up, auto | Max Buffered Upload | Макс. буферизованных POST на соединение. Default: 30 |
+| `scStreamUpServerSecs` | Сервер | stream-up | Stream-Up Server | Keepalive padding в stream-up (default: `"20-80"`) |
+| `serverMaxHeaderBytes` | Сервер | Все | Server Max Header Bytes | Лимит размера заголовков (default: 8192) |
+| `noSSEHeader` | Сервер | Все | No SSE Header | Подавляет SSE-заголовок в ответе |
+| `uplinkHTTPMethod` | Клиент | Все | Uplink HTTP Method | HTTP-метод для загрузки: `POST`, `PUT`, `GET` (только packet-up) |
+| `sessionPlacement` | Оба | Все | Session Placement | Размещение session ID: `path`, `header`, `cookie`, `query` |
+| `sessionKey` | Оба | Все | Session Key | Имя ключа session (если placement ≠ path) |
+| `seqPlacement` | Оба | Все | Sequence Placement | Размещение sequence number: `path`, `header`, `cookie`, `query` |
+| `seqKey` | Оба | Все | Sequence Key | Имя ключа sequence (если placement ≠ path) |
+| `uplinkDataPlacement` | Клиент | packet-up, auto | Uplink Data Placement | Размещение данных upload: `body`, `header`, `cookie`, `query` |
+| `uplinkDataKey` | Клиент | packet-up, auto | Uplink Data Key | Имя ключа данных (если placement ≠ body) |
+| `uplinkChunkSize` | Клиент | packet-up, auto | Uplink Chunk Size | Размер чанка при размещении в header/cookie |
+| `noGRPCHeader` | Клиент | stream-up, stream-one | No gRPC Header | Подавляет маскировку под gRPC |
+| `xmux` | Клиент | Все | XMUX (toggle) | Мультиплексирование H2/H3. Критично заполнять все ключевые поля (см. ниже) |
+| `downloadSettings` | Клиент | stream-up | — (не в UI) | Разделение upstream/downstream |
+| `headers` | Клиент | Все | Headers | Произвольные заголовки запроса |
 
 > ⚠️ **`mode: "auto"` на клиенте:** при TLS-соединении auto разрешается в `packet-up` (а не в `stream-up`, как утверждается в документации xray). При REALITY — в `stream-one`. Серверный `auto` принимает все три режима. Мы используем явный `stream-up` на сервере, чтобы избежать путаницы.
 
