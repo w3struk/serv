@@ -143,7 +143,6 @@ build_xhttp_payload() {
                 headers: {"User-Agent": "chrome"},
                 xPaddingBytes: "100-1000",
                 scMaxEachPostBytes: "100000-500000",
-                scMinPostsIntervalMs: "50-150",
                 xmux: {
                     maxConcurrency: "16-32",
                     hMaxRequestTimes: "600-900",

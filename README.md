@@ -134,7 +134,7 @@ bash <(wget -qO- https://raw.githubusercontent.com/w3struk/serv/main/setup.sh)
 | `downloadSettings` | Клиент | stream-up | — (не в UI) | Разделение upstream/downstream |
 | `headers` | Клиент | Все | Headers | Произвольные заголовки запроса |
 
-> ⚠️ **`mode: "auto"` на клиенте:** при TLS+H2 auto разрешается в `stream-up` (согласно Discussion #4113). При REALITY без downloadSettings — в `stream-one`. При REALITY с downloadSettings — в `stream-up`. Без TLS — в `packet-up`. Серверный `auto` принимает все три режима. Мы используем явный `stream-up` на сервере, чтобы избежать путаницы.
+> ⚠️ **`mode: "auto"` на клиенте** (dialer.go:361-369): auto разрешается по наличию REALITY, а не TLS. Без REALITY → `packet-up`. С REALITY без downloadSettings → `stream-one`. С REALITY + downloadSettings → `stream-up`. Серверный `auto` принимает все три режима. Мы используем явный `stream-up` на сервере, чтобы избежать путаницы.
 
 ### XMUX: критическое правило заполнения
 
