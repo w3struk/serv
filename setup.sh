@@ -179,7 +179,10 @@ build_xhttp_payload() {
                     dest: $domain,
                     port: 443,
                     forceTls: "tls",
-                    remark: ""
+                    remark: "",
+                    sni: $domain,
+                    fingerprint: "chrome",
+                    alpn: ["h2", "http/1.1"]
                 }],
                 xhttpSettings: xhttp_settings,
                 finalmask: {}
@@ -639,6 +642,8 @@ if ! echo "$ALL_SETTINGS_RESP" | jq_success; then
     rm "$COOKIE_FILE"
     exit 1
 fi
+XHTTP_XMUX=''
+
 UPDATED_SETTINGS=$(echo "$ALL_SETTINGS_RESP" | jq -c \
     --arg web_base_path "/$ADMIN_PATH/" \
     --arg sub_path "/$SUB_PATH/" \
@@ -647,6 +652,7 @@ UPDATED_SETTINGS=$(echo "$ALL_SETTINGS_RESP" | jq -c \
     --arg sub_uri "https://$DOMAIN/$SUB_PATH/" \
     --arg sub_json_uri "https://$DOMAIN/$JSON_PATH/" \
     --arg sub_clash_uri "https://$DOMAIN/$CLASH_PATH/" \
+    --arg sub_json_mux "$XHTTP_XMUX" \
     '.obj
      | .webBasePath = $web_base_path
      | .subEnable = true
@@ -655,7 +661,7 @@ UPDATED_SETTINGS=$(echo "$ALL_SETTINGS_RESP" | jq -c \
      | .subJsonEnable = true
      | .subJsonPath = $json_path
      | .subJsonURI = $sub_json_uri
-     | .subJsonMux = ""
+     | .subJsonMux = $sub_json_mux
      | .subClashEnable = true
      | .subClashPath = $clash_path
      | .subClashURI = $sub_clash_uri')

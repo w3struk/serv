@@ -9,7 +9,7 @@ services:
             - ./Caddyfile:/etc/caddy/Caddyfile
 
     3xui:
-        image: ghcr.io/mhsanaei/3x-ui:latest
+        image: ghcr.io/w3struk/3x-ui:fix-json-sub
         container_name: 3xui_app
         restart: unless-stopped
         network_mode: host
