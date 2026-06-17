@@ -4,6 +4,3 @@
 [submodule "external/Xray-core"]
 	path = external/Xray-core
 	url = https://github.com/XTLS/Xray-core.git
-[submodule "external/mihomo"]
-	path = external/mihomo
-	url = https://github.com/MetaCubeX/mihomo.git
