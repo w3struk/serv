@@ -115,15 +115,15 @@ bash <(wget -qO- https://raw.githubusercontent.com/w3struk/serv/main/setup.sh)
 | `xPaddingHeader` | Оба | Все | Padding Header | Имя заголовка для padding |
 | `xPaddingPlacement` | Оба | Все | Padding Placement | Размещение padding: `queryInHeader`, `header`, `cookie`, `query` |
 | `xPaddingMethod` | Оба | Все | Padding Method | Метод обфускации: `repeat-x`, `tokenish` |
-| `scMaxEachPostBytes` | Оба | packet-up, stream-up | Max Upload Size (Byte) | Макс. объём данных в одном POST. Default: 1000000 (1 МБ). Сервер отклоняет POST > лимита во всех режимах с POST; клиент ограничивает размер в packet-up. Диапазон `"100000-500000"` снижает фингерпринт |
+| `scMaxEachPostBytes` | Оба | packet-up | Max Upload Size (Byte) | Макс. объём данных в одном POST. Default: 1000000 (1 МБ). Сервер отклоняет POST > лимита; клиент ограничивает размер. Диапазон `"100000-500000"` снижает фингерпринт |
 | `scMinPostsIntervalMs` | Клиент | packet-up | Min upload interval (ms) | Мин. интервал между POST. Default: 30 мс — **DPI-фингерпринт!** Используйте `"50-150"` |
-| `scMaxBufferedPosts` | Сервер | packet-up | Max Buffered Upload | Макс. буферизованных POST на соединение. Default: 30 |
+| `scMaxBufferedPosts` | Сервер | packet-up, stream-up | Max Buffered Upload | Макс. буферизованных POST на соединение. Default: 30. Используется в packet-up и stream-up |
 | `scStreamUpServerSecs` | Сервер | stream-up | Stream-Up Server | Keepalive padding в stream-up (default: `"20-80"`) |
 | `serverMaxHeaderBytes` | Сервер | Все | Server Max Header Bytes | Лимит размера заголовков (default: 8192) |
 | `noSSEHeader` | Сервер | Все | No SSE Header | Подавляет SSE-заголовок в ответе |
 | `uplinkHTTPMethod` | Клиент | Все | Uplink HTTP Method | HTTP-метод для загрузки: `POST`, `PUT`, `GET` (только packet-up) |
-| `sessionPlacement` | Оба | Все | Session Placement | Размещение session ID: `path`, `header`, `cookie`, `query` |
-| `sessionKey` | Оба | Все | Session Key | Имя ключа session (если placement ≠ path) |
+| `sessionPlacement` | Оба | packet-up, stream-up | Session Placement | Размещение session ID: `path`, `header`, `cookie`, `query`. Не используется в stream-one |
+| `sessionKey` | Оба | packet-up, stream-up | Session Key | Имя ключа session (если placement ≠ path) |
 | `seqPlacement` | Оба | packet-up | Sequence Placement | Размещение sequence number: `path`, `header`, `cookie`, `query` |
 | `seqKey` | Оба | packet-up | Sequence Key | Имя ключа sequence (если placement ≠ path) |
 | `uplinkDataPlacement` | Клиент | packet-up | Uplink Data Placement | Размещение данных upload: `body`, `header`, `cookie`, `query` |
