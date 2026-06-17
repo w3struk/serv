@@ -110,10 +110,9 @@ bash <(wget -qO- https://raw.githubusercontent.com/w3struk/serv/main/setup.sh)
 |---|---|---|
 | `path`, `host`, `mode` | Оба | Сервер проверяет, клиент отправляет |
 | `xPadding*` (6 полей) | Оба | Сервер валидирует, клиент генерирует |
-| `scMaxEachPostBytes` | Оба | Сервер отклоняет POST > лимита, клиент ограничивает |
-| `sessionPlacement`, `sessionKey`, `seqPlacement`, `seqKey` | Оба | Согласованный формат session/seq |
-| `uplinkDataPlacement`, `uplinkDataKey` | Оба | Размещение данных uplink |
-| `scMaxBufferedPosts` | Только сервер | Буфер очереди upload (default: 30) |
+| `scMaxEachPostBytes` | Оба | Макс. объём данных в одном POST-запросе. Default: 1000000 (1 МБ). Должно быть меньше лимита CDN/Middlebox. Сервер отклоняет POST > лимита, клиент ограничивает размер |
+| `scMinPostsIntervalMs` | Только клиент | Мин. интервал между POST-запросами для одного прокси-соединения. Default: 30 мс — **DPI-фингерпринт!** Используйте диапазон типа `"50-150"` |
+| `scMaxBufferedPosts` | Только сервер | Макс. количество буферизованных POST-запросов на одно прокси-соединение. Default: 30. При превышении соединение разрывается |
 | `scStreamUpServerSecs` | Только сервер | Keepalive padding в stream-up (default: "20-80") |
 | `serverMaxHeaderBytes` | Только сервер | Лимит размера заголовков (default: 8192) |
 | `noSSEHeader` | Только сервер | Подавляет SSE-заголовок в ответе |
