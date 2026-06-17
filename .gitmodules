@@ -1,0 +1,6 @@
+[submodule "external/3x-ui"]
+	path = external/3x-ui
+	url = https://github.com/w3struk/3x-ui.git
+[submodule "external/Xray-core"]
+	path = external/Xray-core
+	url = https://github.com/XTLS/Xray-core.git
