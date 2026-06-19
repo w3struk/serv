@@ -213,3 +213,4 @@ watch -n 1 'ss -Htn state established | wc -l' #количество актив�
 - [Some examples of uses for Xray-core ](https://github.com/XTLS/Xray-examples)
 - [Browser Dialer](https://xtls.github.io/en/config/features/browser_dialer.html)
 - [Xray Checker](https://xray-checker.kutovoy.dev/ru/)
+- [Параметры транспортного уровня xhttp](https://wiki.metacubex.one/ru/config/proxies/transport/#xhttp-opts)
