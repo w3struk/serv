@@ -91,6 +91,71 @@ ensure_jq() {
     fi
 }
 
+persist_firewall() {
+    # Save the just-applied iptables rules so they survive a reboot.
+    # Mechanism differs per distro family. Best-effort: failure warns but
+    # does not abort (live rules already work until reboot).
+    if command -v apt-get >/dev/null 2>&1; then
+        # Debian/Ubuntu: iptables-persistent -> netfilter-persistent service.
+        # Preseed autosave=false so install is non-interactive and does NOT
+        # capture whatever rules happen to be loaded right now.
+        printf 'iptables-persistent iptables-persistent/autosave_v4 boolean false\niptables-persistent iptables-persistent/autosave_v6 boolean false\n' \
+            | debconf-set-selections 2>/dev/null || true
+        if DEBIAN_FRONTEND=noninteractive apt-get install -y -qq iptables-persistent; then
+            mkdir -p /etc/iptables
+            if iptables-save > /etc/iptables/rules.v4 2>/dev/null; then
+                if command -v systemctl >/dev/null 2>&1 && systemctl enable netfilter-persistent >/dev/null 2>&1; then
+                    echo -e "  ${G}Firewall rules persisted (netfilter-persistent)${N}"
+                else
+                    echo -e "  ${Y}Warning:${N} Rules saved to /etc/iptables/rules.v4 but boot service could not be enabled; rules may not survive reboot."
+                fi
+            else
+                echo -e "  ${Y}Warning:${N} iptables-persistent installed but rules save failed."
+            fi
+        else
+            echo -e "  ${Y}Warning:${N} Could not install iptables-persistent; rules will not survive reboot."
+        fi
+    elif command -v dnf >/dev/null 2>&1 || command -v yum >/dev/null 2>&1; then
+        local pm_install_ok=false
+        if command -v dnf >/dev/null 2>&1; then
+            dnf install -y iptables-services && pm_install_ok=true
+        else
+            yum install -y iptables-services && pm_install_ok=true
+        fi
+        if [ "$pm_install_ok" = "true" ]; then
+            if iptables-save > /etc/sysconfig/iptables 2>/dev/null; then
+                if command -v systemctl >/dev/null 2>&1 && systemctl enable iptables >/dev/null 2>&1; then
+                    echo -e "  ${G}Firewall rules persisted (iptables service)${N}"
+                else
+                    echo -e "  ${Y}Warning:${N} Rules saved to /etc/sysconfig/iptables but boot service could not be enabled; rules may not survive reboot."
+                fi
+            else
+                echo -e "  ${Y}Warning:${N} iptables-services installed but rules save failed."
+            fi
+        else
+            echo -e "  ${Y}Warning:${N} Could not install iptables-services; rules will not survive reboot."
+        fi
+    elif command -v apk >/dev/null 2>&1; then
+        # Alpine: OpenRC iptables service loads /etc/iptables/rules-save at boot
+        apk add --no-cache iptables >/dev/null || true
+        if [ -f /etc/conf.d/iptables ]; then
+            sed -i 's/SAVE_ON_STOP="yes"/SAVE_ON_STOP="no"/' /etc/conf.d/iptables || true
+        fi
+        mkdir -p /etc/iptables
+        if iptables-save > /etc/iptables/rules-save 2>/dev/null; then
+            if rc-update add iptables boot >/dev/null 2>&1; then
+                echo -e "  ${G}Firewall rules persisted (OpenRC iptables)${N}"
+            else
+                echo -e "  ${Y}Warning:${N} Rules saved to /etc/iptables/rules-save but boot service could not be enabled; rules may not survive reboot."
+            fi
+        else
+            echo -e "  ${Y}Warning:${N} Rules save failed; rules will not survive reboot."
+        fi
+    else
+        echo -e "  ${Y}Warning:${N} Unknown distro — cannot persist firewall rules. Run iptables-save manually."
+    fi
+}
+
 jq_success() {
     jq -e '.success == true' >/dev/null 2>&1
 }
@@ -566,6 +631,18 @@ sed -i "s|\$WEB_PASSWORD_HASH|$BCRYPT_HASH|g" "$SERVER_DIR/Caddyfile"
 echo -e "  ${G}Caddy bcrypt hash updated${N}"
 
 echo -e "${G}[5/8]${N} Configuring firewall..."
+# On RHEL-family, firewalld and iptables-services conflict at runtime and
+# stopping firewalld wipes live rules — so disable it BEFORE applying ours.
+if { command -v dnf >/dev/null 2>&1 || command -v yum >/dev/null 2>&1; } && command -v systemctl >/dev/null 2>&1; then
+    if systemctl is-active --quiet firewalld 2>/dev/null; then
+        systemctl stop firewalld 2>/dev/null || true
+        echo -e "  ${Y}firewalld stopped${N}"
+    fi
+    if systemctl is-enabled --quiet firewalld 2>/dev/null; then
+        systemctl disable firewalld 2>/dev/null || true
+        echo -e "  ${Y}firewalld disabled (conflicts with iptables)${N}"
+    fi
+fi
 iptables -P INPUT ACCEPT
 iptables -F
 iptables -A INPUT -m state --state RELATED,ESTABLISHED -j ACCEPT
@@ -575,6 +652,7 @@ iptables -A INPUT -p tcp --dport 443 -j ACCEPT
 iptables -A INPUT -p udp --dport 443 -j ACCEPT
 iptables -A INPUT -i lo -j ACCEPT
 iptables -P INPUT DROP
+persist_firewall
 echo -e "  ${G}Firewall configured${N}"
 
 echo -e "${G}[6/8]${N} Starting services..."
