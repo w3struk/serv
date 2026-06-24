@@ -40,6 +40,7 @@ $DOMAIN {
 
     handle /$XHTTP_PATH/* {
         reverse_proxy unix/@uds_xhttp {
+            header_up -X-Forwarded-For
             flush_interval -1
             transport http {
                 versions h2c 2
