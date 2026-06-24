@@ -181,6 +181,15 @@ xui_json() {
         -d "$json"
 }
 
+xui_get_json() {
+    local url="$1"
+    local token
+    token=$(csrf_token)
+    curl -s --max-time 10 -b "$COOKIE_FILE" -c "$COOKIE_FILE" -X GET "$url" \
+        -H "X-Requested-With: XMLHttpRequest" \
+        -H "X-CSRF-Token: $token"
+}
+
 xui_login() {
     local u="$1" p="$2"
     local csrf
@@ -198,9 +207,8 @@ xui_login() {
 
 build_xhttp_payload() {
     jq -nc \
-        --arg domain "$1" \
-        --arg path "/$2" \
-        --arg advanced_obfs "$3" '
+        --arg path "/$1" \
+        --arg advanced_obfs "$2" '
         def xhttp_settings:
             {
                 path: $path,
@@ -238,15 +246,6 @@ build_xhttp_payload() {
                 network: "xhttp",
                 security: "none",
                 sockopt: {acceptProxyProtocol: true, trustedXForwardedFor: ["127.0.0.1/32"]},
-                externalProxy: [{
-                    dest: $domain,
-                    port: 443,
-                    forceTls: "tls",
-                    remark: "",
-                    sni: $domain,
-                    fingerprint: "chrome",
-                    alpn: ["h2", "http/1.1"]
-                }],
                 xhttpSettings: xhttp_settings,
                 finalmask: {}
             } | tojson),
@@ -260,6 +259,24 @@ build_xhttp_payload() {
                 refresh: 5,
                 concurrency: 3
             } | tojson)
+        }'
+}
+
+build_host_payload() {
+    jq -nc \
+        --argjson inbound_id "$1" \
+        --arg domain "$2" \
+        '{
+            inboundId: $inbound_id,
+            remark: "public",
+            isDisabled: false,
+            address: $domain,
+            port: 443,
+            security: "tls",
+            sni: $domain,
+            path: "",
+            alpn: ["h2", "http/1.1"],
+            fingerprint: "chrome"
         }'
 }
 
@@ -659,7 +676,7 @@ echo -e "${G}[6/8]${N} Starting services..."
 cd "$SERVER_DIR" && docker compose down && docker compose up -d
 echo -e "  ${G}Services started${N}"
 
-echo -e "${G}[7/8]${N} Configuring 3x-ui Inbounds via API..."
+echo -e "${G}[7/8]${N} Configuring 3x-ui inbound, Host, and client via API..."
 echo "  Waiting for 3x-ui to be ready (max 60s)..."
 MAX_RETRIES=30
 RETRY_COUNT=0
@@ -689,22 +706,80 @@ if ! xui_login "admin" "admin"; then
     exit 1
 fi
 
+echo "  Checking Hosts API compatibility..."
+HOSTS_PREFLIGHT_RESP=$(xui_get_json "http://127.0.0.1:2053/panel/api/hosts/list") || true
+if ! echo "$HOSTS_PREFLIGHT_RESP" | jq_success; then
+    MSG=$(echo "$HOSTS_PREFLIGHT_RESP" | jq -r '.msg // empty' 2>/dev/null || true)
+    MSG=${MSG:-"Hosts API unavailable or unsupported"}
+    echo -e "${R}[ERROR]${N} Hosts API preflight failed: $MSG"
+    echo -e "${R}[ERROR]${N} This installer requires 3x-ui v3.4.0/latest with /panel/api/hosts support."
+    rm "$COOKIE_FILE"
+    exit 1
+fi
+echo -e "  ${G}Hosts API available${N}"
+
 # 1. Add XHTTP Backend (UDS @uds_xhttp, port 0)
 echo "  Adding XHTTP Backend inbound..."
-XHTTP_PAYLOAD=$(build_xhttp_payload "$DOMAIN" "$XHTTP_PATH" "$XHTTP_ADVANCED_OBFS")
+XHTTP_PAYLOAD=$(build_xhttp_payload "$XHTTP_PATH" "$XHTTP_ADVANCED_OBFS")
 XHTTP_RESP=$(xui_json "http://127.0.0.1:2053/panel/api/inbounds/add" "$XHTTP_PAYLOAD") || true
 if ! echo "$XHTTP_RESP" | jq_success; then
     echo -e "${R}[ERROR]${N} XHTTP Backend creation failed"
+    rm "$COOKIE_FILE"
     exit 1
 fi
 XHTTP_ID=$(echo "$XHTTP_RESP" | jq -r '.obj.id // empty')
+if ! [[ "$XHTTP_ID" =~ ^[0-9]+$ ]]; then
+    echo -e "${R}[ERROR]${N} XHTTP Backend creation returned invalid inbound id: ${XHTTP_ID:-empty}"
+    rm "$COOKIE_FILE"
+    exit 1
+fi
 
-# 2. Create subscription client and attach to XHTTP inbound
+# 2. Create public Host row for subscription rendering
+echo "  Creating public Host row..."
+HOST_PAYLOAD=$(build_host_payload "$XHTTP_ID" "$DOMAIN")
+HOST_ADD_RESP=$(xui_json "http://127.0.0.1:2053/panel/api/hosts/add" "$HOST_PAYLOAD") || true
+if ! echo "$HOST_ADD_RESP" | jq -e --argjson inbound_id "$XHTTP_ID" '
+    .success == true
+    and ((.obj.id // 0) != 0)
+    and (.obj.inboundId == $inbound_id)
+' >/dev/null 2>&1; then
+    MSG=$(echo "$HOST_ADD_RESP" | jq -r '.msg // empty' 2>/dev/null || true)
+    MSG=${MSG:-"invalid Hosts API add response"}
+    echo -e "${R}[ERROR]${N} Host row creation failed: $MSG"
+    rm "$COOKIE_FILE"
+    exit 1
+fi
+
+HOST_READBACK_RESP=$(xui_get_json "http://127.0.0.1:2053/panel/api/hosts/byInbound/$XHTTP_ID") || true
+if ! echo "$HOST_READBACK_RESP" | jq -e --arg domain "$DOMAIN" '
+    .success == true
+    and (
+        [.obj[]? | select(
+            (.isDisabled == false)
+            and (.address == $domain)
+            and (.port == 443)
+            and (.security == "tls")
+            and (.sni == $domain)
+            and (.fingerprint == "chrome")
+            and ((.alpn // []) | index("h2") != null)
+            and ((.alpn // []) | index("http/1.1") != null)
+            and (.path == "")
+        )] | length > 0
+    )
+' >/dev/null 2>&1; then
+    echo -e "${R}[ERROR]${N} Host readback validation failed for inbound $XHTTP_ID and domain $DOMAIN"
+    rm "$COOKIE_FILE"
+    exit 1
+fi
+echo -e "  ${G}Public Host row created${N}"
+
+# 3. Create subscription client and attach to XHTTP inbound
 echo "  Creating subscription client..."
 CLIENT_PAYLOAD=$(build_client_payload "$CLIENT_EMAIL" "$CLIENT_ID" "$SUB_ID" "" "$XHTTP_ID")
 CLIENT_RESPONSE=$(xui_json "http://127.0.0.1:2053/panel/api/clients/add" "$CLIENT_PAYLOAD")
 if ! echo "$CLIENT_RESPONSE" | jq_success; then
     echo -e "${R}[ERROR]${N} Subscription client creation failed"
+    rm "$COOKIE_FILE"
     exit 1
 fi
 echo -e "  ${G}Subscription client created${N}"
@@ -782,7 +857,7 @@ curl -s --max-time 10 -b "$COOKIE_FILE" -c "$COOKIE_FILE" -X POST "http://127.0.
 sleep 3
 
 rm "$COOKIE_FILE"
-echo -e "  ${G}Inbounds and subscription configured via API${N}"
+echo -e "  ${G}Inbound, Host, and subscription configured via API${N}"
 
 echo -e "${G}[8/8] Done.${N}"
 
