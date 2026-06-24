@@ -352,6 +352,19 @@ check_installed() {
     return 1
 }
 
+caddy_redir_domain() {
+    sed -n '/redir/p' "$SERVER_DIR/Caddyfile" 2>/dev/null | grep -oP 'https://\K[^{}]+' | head -1 | sed 's/{uri} permanent//' || true
+}
+
+caddy_handle_path() {
+    local pattern="$1"
+    grep -oP "$pattern" "$SERVER_DIR/Caddyfile" 2>/dev/null | head -1 | sed 's/handle \///' || true
+}
+
+caddy_admin_prefix_segment() {
+    grep -oP 'handle /\K[^/]+' "$SERVER_DIR/Caddyfile" 2>/dev/null | grep '^admin-' | head -1 || true
+}
+
 print_banner() {
     echo ""
     echo -e "${C}╔══════════════════════════════════════╗${N}"
@@ -410,9 +423,9 @@ add_client() {
     read -s -p "3x-ui Password: " XUI_PASS
     echo ""
 
-    DOMAIN=$(sed -n '/redir/p' "$SERVER_DIR/Caddyfile" 2>/dev/null | grep -oP 'https://\K[^{}]+' | head -1 | sed 's/{uri} permanent//')
+    DOMAIN=$(caddy_redir_domain)
 
-    local ADM=$(grep -oP 'handle /\K[^/]+' "$SERVER_DIR/Caddyfile" 2>/dev/null | grep '^admin-' | head -1)
+    local ADM=$(caddy_admin_prefix_segment)
     API_PREFIX="/$ADM"
 
     COOKIE_FILE=$(mktemp)
@@ -518,11 +531,11 @@ show_status() {
 
     # Read config from Caddyfile
     if [ -f "$SERVER_DIR/Caddyfile" ]; then
-        ADMIN_PATH=$(grep -oP 'handle /admin-\w+' "$SERVER_DIR/Caddyfile" | head -1 | sed 's/handle \///')
-        SUB_PATH=$(grep -oP 'handle /sub-\w+' "$SERVER_DIR/Caddyfile" | head -1 | sed 's/handle \///')
-        JSON_PATH=$(grep -oP 'handle /json[^/]*' "$SERVER_DIR/Caddyfile" | head -1 | sed 's/handle \///')
-        CLASH_PATH=$(grep -oP 'handle /clash[^/]*' "$SERVER_DIR/Caddyfile" | head -1 | sed 's/handle \///')
-        DOMAIN=$(sed -n '/redir/p' "$SERVER_DIR/Caddyfile" | grep -oP 'https://\K[^{}]+' | head -1 | sed 's/{uri} permanent//')
+        ADMIN_PATH=$(caddy_handle_path 'handle /admin-\w+')
+        SUB_PATH=$(caddy_handle_path 'handle /sub-\w+')
+        JSON_PATH=$(caddy_handle_path 'handle /json[^/]*')
+        CLASH_PATH=$(caddy_handle_path 'handle /clash[^/]*')
+        DOMAIN=$(caddy_redir_domain)
     fi
 
     if [ -n "$DOMAIN" ]; then
