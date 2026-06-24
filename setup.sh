@@ -250,17 +250,25 @@ build_xhttp_payload() {
                 mode: "stream-up",
                 headers: {"User-Agent": "chrome"},
                 xPaddingBytes: "100-1000",
+                sessionIDTable: "Base62",
+                sessionIDLength: "16-32",
+                scStreamUpServerSecs: "20-80",
+                scMaxBufferedPosts: 30,
                 xmux: {
                     maxConcurrency: "16-32",
+                    maxConnections: 0,
+                    cMaxReuseTimes: "256-512",
                     hMaxRequestTimes: "600-900",
-                    hMaxReusableSecs: "1800-3000"
+                    hMaxReusableSecs: "1800-3000",
+                    hKeepAlivePeriod: 0
                 }
             } + if $advanced_obfs == "true" then {
                 xPaddingObfsMode: true,
                 xPaddingKey: "trace",
                 xPaddingHeader: "X-Trace-ID",
                 xPaddingPlacement: "queryInHeader",
-                xPaddingMethod: "tokenish"
+                xPaddingMethod: "tokenish",
+                serverMaxHeaderBytes: 16384
             } else {} end;
         {
             up: 0,

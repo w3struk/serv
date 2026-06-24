@@ -98,13 +98,13 @@ bash <(wget -qO- https://raw.githubusercontent.com/w3struk/serv/main/setup.sh)
 - **VLESS Encryption по умолчанию:** `setup.sh` после логина вызывает нативный API 3x-ui `GET /panel/api/server/getNewVlessEnc` и сохраняет пару в inbound settings: `settings.decryption` для сервера и `settings.encryption` для подписок/клиентов.
 - **XTLS Vision для клиентов:** начальный клиент получает `flow: "xtls-rprx-vision"`; этот flow оптимизирует слой VLESS Encryption, а не транспорт XHTTP.
 - **Безопасность панели:** Настраивает Basic Auth для панели через Caddy, скрывая ее за случайным путем.
-- **Управление подписками:** Подписка XHTTP с одним UUID для всех клиентов. Автоматически включаются VLESS, JSON и Clash/Mihomo форматы.
+- **Управление подписками:** Глобально включаются endpoints и форматы VLESS, JSON и Clash/Mihomo; у каждого клиента свой UUID и URL подписки по `subId`.
 
 ### Требования
 
 - Серверная часть рассчитана на **3x-ui v3.4.0** и **Xray-core v26.6.22**. Нужен Xray-core с поддержкой `vlessenc`; в этом проекте предполагается указанная связка версий.
-- Клиент должен поддерживать одновременно **VLESS Encryption**, **XHTTP** и **XTLS Vision** (`flow: xtls-rprx-vision`).
-- Расширенная XHTTP-обфускация всё ещё рассчитана на клиентов **Xray-core v26.6.1+**, но базовая совместимость проекта теперь — клиенты, совместимые с VLESS Encryption.
+- Клиент должен быть совместим с **Xray-core v26.6.22** и поддерживать **VLESS Encryption**, **XHTTP**, **XTLS Vision** (`flow: xtls-rprx-vision`) и поля XHTTP `sessionIDTable` / `sessionIDLength`.
+- Старые клиенты уровня **Xray-core v26.6.1+** могут быть достаточны только для прежнего advanced-obfs профиля без `sessionID*`; для текущего default-профиля используйте v26.6.22-совместимые клиенты.
 
 Для распространения конфигурации используется обычная VLESS-подписка 3x-ui.
 
@@ -128,45 +128,58 @@ Vision здесь относится к VLESS Encryption: он задаётся 
 
 3x-ui хранит все параметры XHTTP в inbound для передачи клиентам через подписки. `StripInboundXhttpClientFields` вырезает клиентские поля перед отправкой в xray-core runtime — сервер их не видит, но подписки их получают.
 
-| Параметр | Сторона | Режимы | 3x-ui UI | Описание |
-|---|---|---|---|---|
-| `path`, `host`, `mode` | Оба | Все | Path, Host, Mode | Сервер проверяет, клиент отправляет |
-| `xPaddingBytes` | Оба | Все | Padding Bytes | Размер случайного padding (диапазон, default: `"100-1000"`) |
-| `xPaddingObfsMode` | Оба | Все | Padding Obfs Mode | Включает обфускацию padding (bool) |
-| `xPaddingKey` | Оба | Все | Padding Key | Ключ обфускации (при включённом obfsMode) |
-| `xPaddingHeader` | Оба | Все | Padding Header | Имя заголовка для padding |
-| `xPaddingPlacement` | Оба | Все | Padding Placement | Размещение padding: `queryInHeader`, `header`, `cookie`, `query` |
-| `xPaddingMethod` | Оба | Все | Padding Method | Метод обфускации: `repeat-x`, `tokenish` |
-| `scMaxEachPostBytes` | Оба | packet-up | Max Upload Size (Byte) | Макс. объём данных в одном POST. Default: 1000000 (1 МБ). Сервер отклоняет POST > лимита; клиент ограничивает размер. Диапазон `"100000-500000"` снижает фингерпринт |
-| `scMinPostsIntervalMs` | Клиент | packet-up | Min upload interval (ms) | Мин. интервал между POST. Default: 30 мс — **DPI-фингерпринт!** Используйте `"50-150"` |
-| `scMaxBufferedPosts` | Сервер | packet-up, stream-up | Max Buffered Upload | Макс. буферизованных POST на соединение. Default: 30. Используется в packet-up и stream-up |
-| `scStreamUpServerSecs` | Сервер | stream-up | Stream-Up Server | Keepalive padding в stream-up (default: `"20-80"`) |
-| `serverMaxHeaderBytes` | Сервер | Все | Server Max Header Bytes | Лимит размера заголовков (default: 8192) |
-| `noSSEHeader` | Сервер | Все | No SSE Header | Подавляет SSE-заголовок в ответе |
-| `uplinkHTTPMethod` | Клиент | Все | Uplink HTTP Method | HTTP-метод для загрузки: `POST`, `PUT`, `GET` (только packet-up) |
-| `sessionPlacement` | Оба | packet-up, stream-up | Session Placement | Размещение session ID: `path`, `header`, `cookie`, `query`. Не используется в stream-one |
-| `sessionKey` | Оба | packet-up, stream-up | Session Key | Имя ключа session (если placement ≠ path) |
-| `seqPlacement` | Оба | packet-up | Sequence Placement | Размещение sequence number: `path`, `header`, `cookie`, `query` |
-| `seqKey` | Оба | packet-up | Sequence Key | Имя ключа sequence (если placement ≠ path) |
-| `uplinkDataPlacement` | Клиент | packet-up | Uplink Data Placement | Размещение данных upload: `body`, `header`, `cookie`, `query` |
-| `uplinkDataKey` | Клиент | packet-up | Uplink Data Key | Имя ключа данных (если placement ≠ body) |
-| `uplinkChunkSize` | Клиент | packet-up | Uplink Chunk Size | Размер чанка при размещении в header/cookie |
-| `noGRPCHeader` | Клиент | stream-up, stream-one | No gRPC Header | Подавляет маскировку под gRPC |
-| `xmux` | Клиент | packet-up, stream-up | XMUX (toggle) | Мультиплексирование H2/H3. Критично заполнять все ключевые поля (см. ниже) |
-| `downloadSettings` | Клиент | stream-up | — (не в UI) | Разделение upstream/downstream |
-| `headers` | Клиент | Все | Headers | Произвольные заголовки запроса |
+Легенда: `нет` в колонке `setup.sh` означает «не задаёт установщик», а не «не поддерживается».
+
+| Параметр | Сторона | Режимы | 3x-ui UI | setup.sh | Описание |
+|---|---|---|---|---|---|
+| `path` | Оба | Все | Path | да: `/$XHTTP_PATH` | Сервер проверяет, клиент отправляет |
+| `host` | Оба | Все | Host | нет в `xhttpSettings`; Host row: address/SNI/port/TLS/fingerprint | Публичный host для подписок задаётся через Host row |
+| `mode` | Оба | Все | Mode | да: `stream-up` | Режим XHTTP |
+| `xPaddingBytes` | Оба | Все | Padding Bytes | да: `100-1000` | Размер случайного padding (диапазон, default: `"100-1000"`) |
+| `xPaddingObfsMode` | Оба | Все | Padding Obfs Mode | опц.: `true` | Включает обфускацию padding (bool) |
+| `xPaddingKey` | Оба | Все | Padding Key | опц.: `trace` | Ключ обфускации (при включённом obfsMode) |
+| `xPaddingHeader` | Оба | Все | Padding Header | опц.: `X-Trace-ID` | Имя заголовка для padding |
+| `xPaddingPlacement` | Оба | Все | Padding Placement | опц.: `queryInHeader` | Размещение padding: `queryInHeader`, `header`, `cookie`, `query` |
+| `xPaddingMethod` | Оба | Все | Padding Method | опц.: `tokenish` | Метод обфускации: `repeat-x`, `tokenish` |
+| `scMaxEachPostBytes` | Оба | packet-up | Max Upload Size (Byte) | нет | Макс. объём данных в одном POST. Default: 1000000 (1 МБ). Сервер отклоняет POST > лимита; клиент ограничивает размер. Диапазон `"100000-500000"` снижает фингерпринт |
+| `scMinPostsIntervalMs` | Клиент | packet-up | Min upload interval (ms) | нет | Мин. интервал между POST. Default: 30 мс — **DPI-фингерпринт!** Используйте `"50-150"` |
+| `scMaxBufferedPosts` | Сервер | packet-up, stream-up | Max Buffered Upload | да: `30` | Макс. буферизованных POST на соединение. Default: 30. Используется в packet-up и stream-up |
+| `scStreamUpServerSecs` | Сервер | stream-up | Stream-Up Server | да: `20-80` | Keepalive padding в stream-up (default: `"20-80"`) |
+| `serverMaxHeaderBytes` | Сервер | Все | Server Max Header Bytes | опц.: `16384` при advanced obfs | Лимит размера заголовков (default: 8192) |
+| `noSSEHeader` | Сервер | Все | No SSE Header | нет | Подавляет SSE-заголовок в ответе |
+| `uplinkHTTPMethod` | Клиент | Все | Uplink HTTP Method | нет | HTTP-метод для загрузки: `POST`, `PUT`, `GET` (только packet-up) |
+| `sessionIDPlacement` | Оба | packet-up, stream-up | Session ID Placement | нет | Размещение session ID: `path`, `header`, `cookie`, `query`. Не используется в stream-one |
+| `sessionIDKey` | Оба | packet-up, stream-up | Session ID Key | нет | Имя ключа session ID (если placement ≠ path) |
+| `sessionIDTable` | Оба | packet-up, stream-up | Session ID Table | да: `Base62` | Алфавит session ID |
+| `sessionIDLength` | Оба | packet-up, stream-up | Session ID Length | да: `16-32` | Длина session ID |
+| `seqPlacement` | Оба | packet-up | Sequence Placement | нет | Размещение sequence number: `path`, `header`, `cookie`, `query` |
+| `seqKey` | Оба | packet-up | Sequence Key | нет | Имя ключа sequence (если placement ≠ path) |
+| `uplinkDataPlacement` | Клиент | packet-up | Uplink Data Placement | нет | Размещение данных upload: `body`, `header`, `cookie`, `query` |
+| `uplinkDataKey` | Клиент | packet-up | Uplink Data Key | нет | Имя ключа данных (если placement ≠ body) |
+| `uplinkChunkSize` | Клиент | packet-up | Uplink Chunk Size | нет | Размер чанка при размещении в header/cookie |
+| `noGRPCHeader` | Клиент | stream-up, stream-one | No gRPC Header | нет | Подавляет маскировку под gRPC |
+| `xmux` | Клиент | packet-up, stream-up | XMUX (toggle) | да: `maxConcurrency=16-32`; `maxConnections=0`; `cMaxReuseTimes=256-512`; `hMaxRequestTimes=600-900`; `hMaxReusableSecs=1800-3000`; `hKeepAlivePeriod=0` | Мультиплексирование H2/H3. Критично заполнять все ключевые поля (см. ниже) |
+| `downloadSettings` | Клиент | stream-up | — (не в UI) | нет | Разделение upstream/downstream |
+| `headers` | Клиент | Все | Headers | частично: `User-Agent=chrome`; остальное — нет | Произвольные заголовки запроса |
+
+Вне `xhttpSettings` установщик задаёт `network: "xhttp"`, UDS `@uds_xhttp`, `security: "none"`, `sockopt.acceptProxyProtocol: true`, `sockopt.trustedXForwardedFor: ["127.0.0.1/32"]`, а в Caddy — h2c + PROXY v2.
+
+`sessionIDPlacement` / `sessionIDKey` намеренно не задаются: установщик оставляет default-размещение в path и меняет только таблицу/длину session ID.
 
 > ⚠️ **`mode: "auto"` на клиенте** (dialer.go:361-369): auto разрешается по наличию REALITY, а не TLS. Без REALITY → `packet-up`. С REALITY без downloadSettings → `stream-one`. С REALITY + downloadSettings → `stream-up`. Серверный `auto` принимает все три режима. Мы используем явный `stream-up` на сервере, чтобы избежать путаницы.
 
 ### XMUX: критическое правило заполнения
 
-Если заполнен **хотя бы один** параметр xmux — остальные теряют дефолты и становятся 0 (безлимит). Всегда заполняйте все три ключевых поля:
+Если заполнен **хотя бы один** параметр xmux — остальные теряют дефолты и становятся 0 (безлимит). `setup.sh` явно задаёт все шесть полей, включая нулевые значения:
 
 | Поле | Значение | Описание |
 |---|---|---|
 | `maxConcurrency` | `"16-32"` | Макс. одновременных запросов на соединение |
+| `maxConnections` | `0` | Явное нулевое значение, чтобы не полагаться на неявные дефолты |
+| `cMaxReuseTimes` | `"256-512"` | Макс. число переиспользований соединения |
 | `hMaxRequestTimes` | `"600-900"` | Макс. HTTP-запросов на соединение (Nginx default: 1000) |
 | `hMaxReusableSecs` | `"1800-3000"` | Макс. время жизни соединения (Nginx default: 3600с) |
+| `hKeepAlivePeriod` | `0` | Явное нулевое значение keepalive period |
 
 > ⚠️ **Не включайте `mux.cool` вместе с XHTTP.** При наличии `xmux` в inbound глобальный `subJsonMux` автоматически подавляется в JSON-подписках.
 
@@ -199,8 +212,7 @@ Vision здесь относится к VLESS Encryption: он задаётся 
 │  listen: @uds_xhttp  (Unix Domain Socket)    │
 │  network: xhttp, mode: stream-up              │
 │  security: none  (TLS уже завершён в Caddy)    │
-│  xmux: maxConcurrency=16-32, hMaxReq=600-900  │
-│        hMaxReusableSecs=1800-3000             │
+│  xmux: six explicit fields                    │
 └──────────────────────────────────────────────┘
 ```
 
