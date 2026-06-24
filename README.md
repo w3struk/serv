@@ -1,4 +1,6 @@
-# 3x-ui + Caddy + VLESS + XHTTP — схема проксирования (XHTTP-only)
+# 3x-ui + Caddy + VLESS Encryption + XTLS Vision + XHTTP
+
+XHTTP-only схема для 3x-ui: публичный TLS завершает Caddy, трафик до Xray идёт через Unix Domain Socket `@uds_xhttp`, а новые установки по умолчанию включают **VLESS Encryption** и client `flow: "xtls-rprx-vision"`.
 
 ## Настройка сервера
 
@@ -92,15 +94,35 @@ bash <(wget -qO- https://raw.githubusercontent.com/w3struk/serv/main/setup.sh)
 
 ### Возможности 
 
-- **Единый Inbound:** Создаётся только VLESS-XHTTP-Backend (UDS, h2c). Публичный TLS завершает Caddy.
+- **Единый inbound:** Создаётся только `VLESS-XHTTP-Backend` (`network: "xhttp"`, `security: "none"`, UDS/h2c). Публичный TLS завершает Caddy.
+- **VLESS Encryption по умолчанию:** `setup.sh` после логина вызывает нативный API 3x-ui `GET /panel/api/server/getNewVlessEnc` и сохраняет пару в inbound settings: `settings.decryption` для сервера и `settings.encryption` для подписок/клиентов.
+- **XTLS Vision для клиентов:** начальный клиент получает `flow: "xtls-rprx-vision"`; этот flow оптимизирует слой VLESS Encryption, а не транспорт XHTTP.
 - **Безопасность панели:** Настраивает Basic Auth для панели через Caddy, скрывая ее за случайным путем.
 - **Управление подписками:** Подписка XHTTP с одним UUID для всех клиентов. Автоматически включаются VLESS, JSON и Clash/Mihomo форматы.
 
-### Требования к Xray-клиенту
+### Требования
 
-Расширенная XHTTP-обфускация рассчитана на **Xray-core v26.6.1**. Для распространения конфигурации используется обычная VLESS-подписка 3x-ui
+- Серверная часть рассчитана на **3x-ui v3.4.0** и **Xray-core v26.6.22**. Нужен Xray-core с поддержкой `vlessenc`; в этом проекте предполагается указанная связка версий.
+- Клиент должен поддерживать одновременно **VLESS Encryption**, **XHTTP** и **XTLS Vision** (`flow: xtls-rprx-vision`).
+- Расширенная XHTTP-обфускация всё ещё рассчитана на клиентов **Xray-core v26.6.1+**, но базовая совместимость проекта теперь — клиенты, совместимые с VLESS Encryption.
+
+Для распространения конфигурации используется обычная VLESS-подписка 3x-ui.
 
 В VLESS URI параметры `path`, `host` и `mode` передаются отдельно, `xPaddingBytes` дополнительно доступен как `x_padding_bytes`, а полный набор клиентских XHTTP-полей находится в URL-кодированном JSON-параметре `extra`.
+
+## Слои трафика
+
+```
+VLESS user + flow=xtls-rprx-vision
+        ↓
+VLESS Encryption (settings.encryption/decryption)
+        ↓
+XHTTP transport (mode=stream-up, xmux)
+        ↓
+Caddy TLS / публичная сеть :443
+```
+
+Vision здесь относится к VLESS Encryption: он задаётся в объекте клиента как `flow`, но не превращает XHTTP в Vision-транспорт. За Caddy TLS termination и XHTTP/UDS не ожидается TCP splice — это нормальная схема для данного проекта.
 
 ## Параметры XHTTP: сервер vs клиент
 
@@ -151,7 +173,10 @@ bash <(wget -qO- https://raw.githubusercontent.com/w3struk/serv/main/setup.sh)
 ## Архитектура проксирования
 
 ```
-Клиент (VLESS/XHTTP)
+Клиент
+  VLESS UUID + flow=xtls-rprx-vision
+  VLESS Encryption: settings.encryption из подписки
+  XHTTP: mode=stream-up, xmux
        │
        │ TLS :443
        ▼
@@ -167,10 +192,13 @@ bash <(wget -qO- https://raw.githubusercontent.com/w3struk/serv/main/setup.sh)
                       ▼
 ┌──────────────────────────────────────────────┐
 │ 3x-ui  VLESS-XHTTP-Backend (inbound only)    │
+│  settings.decryption = server vlessenc        │
+│  settings.encryption = client/sub vlessenc    │
 │  streamSettings.sockopt:                     │
 │    acceptProxyProtocol: true                  │
 │  listen: @uds_xhttp  (Unix Domain Socket)    │
 │  network: xhttp, mode: stream-up              │
+│  security: none  (TLS уже завершён в Caddy)    │
 │  xmux: maxConcurrency=16-32, hMaxReq=600-900  │
 │        hMaxReusableSecs=1800-3000             │
 └──────────────────────────────────────────────┘
@@ -186,6 +214,12 @@ bash <(wget -qO- https://raw.githubusercontent.com/w3struk/serv/main/setup.sh)
 ./setup.sh status           # Просмотр статуса контейнеров, ссылок, путей и портов
 ./setup.sh help             # Справка по командами скрипта
 ```
+
+### Добавление клиентов и VLESS Encryption
+
+`./setup.sh add-client` читает существующий inbound `VLESS-XHTTP-Backend`. Если в нём одновременно заполнены `settings.encryption` и `settings.decryption` и они не равны `none`, новый клиент получает только `flow: "xtls-rprx-vision"`.
+
+В объекте клиента для `/panel/api/clients/add` поля `encryption` нет: строка VLESS Encryption хранится на уровне inbound и попадает в подписки из `settings.encryption`. Проверить состояние можно через `./setup.sh status` — для inbound будет показано `vlessenc=on`.
 
 **Работа с Docker:**
 ```bash

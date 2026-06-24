@@ -56,6 +56,9 @@ B="\033[1m"
 N="\033[0m"
 
 API_PREFIX=""
+VLESS_FLOW="xtls-rprx-vision"
+VLESS_CLIENT_ENCRYPTION=""
+VLESS_SERVER_DECRYPTION="none"
 
 ensure_jq() {
     if command -v jq >/dev/null 2>&1; then
@@ -205,10 +208,42 @@ xui_login() {
     echo "$resp" | jq_success
 }
 
+generate_vlessenc_pair() {
+    local resp pair dec enc
+
+    if ! resp=$(xui_get_json "http://127.0.0.1:2053${API_PREFIX}/panel/api/server/getNewVlessEnc"); then
+        echo -e "${R}[ERROR]${N} Failed to request VLESS Encryption pair from 3x-ui" >&2
+        return 1
+    fi
+
+    pair=$(echo "$resp" | jq -r '
+        if .success != true then empty
+        else
+            (.obj.auths // []) as $auths
+            | (($auths | map(select((.id // "") == "mlkem768"))[0]) // $auths[0])
+            | select(.decryption and .encryption)
+            | [.decryption, .encryption]
+            | @tsv
+        end
+    ' 2>/dev/null || true)
+    dec=${pair%%$'\t'*}
+    enc=${pair#*$'\t'}
+
+    if [ -z "$pair" ] || [ "$dec" = "$enc" ] || [ -z "$dec" ] || [ -z "$enc" ]; then
+        echo -e "${R}[ERROR]${N} Could not parse VLESS Encryption pair from 3x-ui response" >&2
+        return 1
+    fi
+
+    VLESS_SERVER_DECRYPTION="$dec"
+    VLESS_CLIENT_ENCRYPTION="$enc"
+}
+
 build_xhttp_payload() {
     jq -nc \
         --arg path "/$1" \
-        --arg advanced_obfs "$2" '
+        --arg advanced_obfs "$2" \
+        --arg server_decryption "$3" \
+        --arg client_encryption "$4" '
         def xhttp_settings:
             {
                 path: $path,
@@ -239,7 +274,8 @@ build_xhttp_payload() {
             protocol: "vless",
             settings: ({
                 clients: [],
-                decryption: "none",
+                decryption: $server_decryption,
+                encryption: $client_encryption,
                 fallbacks: []
             } | tojson),
             streamSettings: ({
@@ -297,7 +333,8 @@ build_client_payload() {
                 totalGB: 0,
                 expiryTime: 0,
                 tgId: 0
-            } + if $flow != "" then {flow: $flow} else {} end),
+            }
+            + if $flow != "" then {flow: $flow} else {} end),
             inboundIds: ($inbound_ids | split(",") | map(tonumber))
         }'
 }
@@ -341,6 +378,12 @@ print_summary() {
     if [ -n "$XHTTP_PATH" ]; then
         echo -e "  ${Y}XHTTP path:${N} /$XHTTP_PATH/"
     fi
+    if [ -n "$VLESS_CLIENT_ENCRYPTION" ] && [ "$VLESS_CLIENT_ENCRYPTION" != "none" ]; then
+        echo -e "  ${Y}VLESS Encryption:${N} ${G}enabled${N}"
+        echo -e "  ${Y}XTLS flow:${N} ${C}$VLESS_FLOW${N}"
+        echo -e "  ${Y}Client encryption:${N} ${C}$VLESS_CLIENT_ENCRYPTION${N}"
+        echo -e "  ${Y}Note:${N} client encryption is stored in inbound settings for subscription rendering."
+    fi
     echo ""
     echo -e "${Y}Note: Certificates might take a minute to generate.${N}"
     echo ""
@@ -383,6 +426,17 @@ add_client() {
         local resp; resp=$(curl -s --max-time 5 -b "$COOKIE_FILE" "http://127.0.0.1:2053${API_PREFIX}/panel/api/inbounds/list" \
             -H "X-Requested-With: XMLHttpRequest" -H "X-CSRF-Token: $csrf")
         ID_XHTTP=$(echo "$resp" | jq -r '.obj[]? | select(.remark == "VLESS-XHTTP-Backend") | .id' 2>/dev/null | head -1)
+        XHTTP_HAS_VLESSENC=$(echo "$resp" | jq -r '
+            def settings_obj:
+                if (.settings | type) == "string" then (.settings | fromjson? // {})
+                elif (.settings | type) == "object" then .settings
+                else {} end;
+            .obj[]? | select(.remark == "VLESS-XHTTP-Backend")
+            | settings_obj
+            | if (((.decryption // "") != "" and (.decryption // "") != "none")
+                  and ((.encryption // "") != "" and (.encryption // "") != "none"))
+              then "true" else "false" end
+        ' 2>/dev/null | head -1)
     }
 
     gen_email() {
@@ -399,8 +453,12 @@ add_client() {
     CID=$(cat /proc/sys/kernel/random/uuid)
     SID=$(head -c 16 /dev/urandom | md5sum | head -c 16)
     EMAIL="${CLIENT_EMAIL:-$(gen_email)}"
+    CLIENT_FLOW=""
+    if [ "$XHTTP_HAS_VLESSENC" = "true" ]; then
+        CLIENT_FLOW="$VLESS_FLOW"
+    fi
 
-    PAYLOAD=$(build_client_payload "$EMAIL" "$CID" "$SID" "" "$ID_XHTTP")
+    PAYLOAD=$(build_client_payload "$EMAIL" "$CID" "$SID" "$CLIENT_FLOW" "$ID_XHTTP")
     RESPONSE=$(xui_json "http://127.0.0.1:2053${API_PREFIX}/panel/api/clients/add" "$PAYLOAD")
 
     if echo "$RESPONSE" | jq_success; then
@@ -423,6 +481,10 @@ add_client() {
     echo -e "  ${C}Clash:${N} https://${C}${DOMAIN}${N}${CLASH_PATH}${SID}  (${EMAIL})"
     echo ""
     echo -e "${B}XHTTP UUID:${N} ${C}$CID${N}"
+    if [ -n "$CLIENT_FLOW" ]; then
+        echo -e "${B}XTLS flow:${N} ${C}$CLIENT_FLOW${N}"
+        echo -e "${B}VLESS Encryption:${N} ${G}enabled via inbound settings${N}"
+    fi
 
     rm "$COOKIE_FILE"
 }
@@ -481,9 +543,12 @@ def settings_obj:
   else
     $inbounds[]
     | . as $inbound
-    | ($inbound | settings_obj | (.clients // [])) as $clients
+    | ($inbound | settings_obj) as $settings
+    | ($settings | (.clients // [])) as $clients
+    | (((($settings.decryption // "") != "" and ($settings.decryption // "") != "none")
+        and (($settings.encryption // "") != "" and ($settings.encryption // "") != "none"))) as $vlessenc
     | [
-        "  \($inbound.remark // $inbound.tag // "") (\($inbound.port // ""), \($inbound.streamSettings.network // "tcp"), \($inbound.streamSettings.security // "none")) - \($clients | length) client(s)",
+        "  \($inbound.remark // $inbound.tag // "") (\($inbound.port // ""), \($inbound.streamSettings.network // "tcp"), \($inbound.streamSettings.security // "none")) - \($clients | length) client(s)\(if $vlessenc then " vlessenc=on" else "" end)",
         ($clients[]? | "    └ \((.id // "")[0:8])... sub=\(.subId // "")\(if (.flow // "") != "" then " flow=\(.flow)" else "" end)\(if (.email // "") != "" then " email=\(.email)" else "" end)")
       ][]
   end
@@ -604,6 +669,8 @@ echo -e "${Y}Clash path:${N}  /$CLASH_PATH/"
 echo -e "${Y}XHTTP path:${N}  /$XHTTP_PATH/"
 echo -e "${Y}XHTTP UUID:${N}  ${C}$CLIENT_ID${N}"
 echo -e "${Y}Advanced XHTTP padding:${N} $XHTTP_ADVANCED_OBFS"
+echo -e "${Y}VLESS Encryption:${N} enabled by default"
+echo -e "${Y}XTLS flow:${N}   $VLESS_FLOW"
 echo ""
 
 echo -e "${G}[1/8]${N} Preparing directories..."
@@ -718,9 +785,19 @@ if ! echo "$HOSTS_PREFLIGHT_RESP" | jq_success; then
 fi
 echo -e "  ${G}Hosts API available${N}"
 
+# 1. Generate VLESS Encryption pair for inbound settings.
+# 3x-ui stores both the server decryption and the client encryption strings at
+# inbound settings level; subscriptions read settings.encryption from there.
+echo "  Generating VLESS Encryption pair..."
+if ! generate_vlessenc_pair; then
+    rm "$COOKIE_FILE"
+    exit 1
+fi
+echo -e "  ${G}VLESS Encryption enabled${N} (${VLESS_FLOW})"
+
 # 1. Add XHTTP Backend (UDS @uds_xhttp, port 0)
 echo "  Adding XHTTP Backend inbound..."
-XHTTP_PAYLOAD=$(build_xhttp_payload "$XHTTP_PATH" "$XHTTP_ADVANCED_OBFS")
+XHTTP_PAYLOAD=$(build_xhttp_payload "$XHTTP_PATH" "$XHTTP_ADVANCED_OBFS" "$VLESS_SERVER_DECRYPTION" "$VLESS_CLIENT_ENCRYPTION")
 XHTTP_RESP=$(xui_json "http://127.0.0.1:2053/panel/api/inbounds/add" "$XHTTP_PAYLOAD") || true
 if ! echo "$XHTTP_RESP" | jq_success; then
     echo -e "${R}[ERROR]${N} XHTTP Backend creation failed"
@@ -775,7 +852,7 @@ echo -e "  ${G}Public Host row created${N}"
 
 # 3. Create subscription client and attach to XHTTP inbound
 echo "  Creating subscription client..."
-CLIENT_PAYLOAD=$(build_client_payload "$CLIENT_EMAIL" "$CLIENT_ID" "$SUB_ID" "" "$XHTTP_ID")
+CLIENT_PAYLOAD=$(build_client_payload "$CLIENT_EMAIL" "$CLIENT_ID" "$SUB_ID" "$VLESS_FLOW" "$XHTTP_ID")
 CLIENT_RESPONSE=$(xui_json "http://127.0.0.1:2053/panel/api/clients/add" "$CLIENT_PAYLOAD")
 if ! echo "$CLIENT_RESPONSE" | jq_success; then
     echo -e "${R}[ERROR]${N} Subscription client creation failed"
