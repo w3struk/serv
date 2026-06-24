@@ -275,8 +275,7 @@ build_xhttp_payload() {
             settings: ({
                 clients: [],
                 decryption: $server_decryption,
-                encryption: $client_encryption,
-                fallbacks: []
+                encryption: $client_encryption
             } | tojson),
             streamSettings: ({
                 network: "xhttp",
