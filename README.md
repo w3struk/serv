@@ -216,15 +216,15 @@ Caddy TLS / публичная сеть :443
 
 > ⚠️ **Не включайте `mux.cool` вместе с XHTTP.** При наличии `xmux` в inbound глобальный `subJsonMux` автоматически подавляется в JSON-подписках.
 
-### XMUX: критическое правило заполнения
+### XMUX: профиль Xray-core v26.6.27
 
-Если заполнен **хотя бы один** параметр `xmux`, остальные теряют дефолты и становятся `0` (безлимит). Поэтому `setup.sh` явно задаёт все шесть полей, включая нулевые значения:
+`setup.sh` явно задаёт все шесть полей `xmux`, чтобы подписки не зависели от неявных дефолтов клиента. Профиль соответствует Xray-core v26.6.27 default anti-RKN:
 
 | Поле | Значение | Описание |
 |---|---|---|
-| `maxConcurrency` | `"16-32"` | Максимум одновременных запросов на соединение |
-| `maxConnections` | `0` | Явное нулевое значение, чтобы не полагаться на неявные дефолты |
-| `cMaxReuseTimes` | `"256-512"` | Максимальное число переиспользований соединения |
+| `maxConcurrency` | `0` | Не включает лимит одновременных запросов на соединение |
+| `maxConnections` | `"6"` | Новое default-значение Xray-core v26.6.27 |
+| `cMaxReuseTimes` | `0` | Не задаёт клиентский лимит переиспользований соединения |
 | `hMaxRequestTimes` | `"600-900"` | Максимум HTTP-запросов на соединение (Nginx default: 1000) |
 | `hMaxReusableSecs` | `"1800-3000"` | Максимальное время жизни соединения (Nginx default: 3600с) |
 | `hKeepAlivePeriod` | `0` | Явное нулевое значение keepalive period |
@@ -310,7 +310,7 @@ Caddy TLS / публичная сеть :443
 | `uplinkDataKey` | Клиент | packet-up | Uplink Data Key | нет | Имя ключа данных, если placement ≠ body |
 | `uplinkChunkSize` | Клиент | packet-up | Uplink Chunk Size | нет | Размер чанка при размещении в header/cookie |
 | `noGRPCHeader` | Клиент | stream-up, stream-one | No gRPC Header | нет | Подавляет маскировку под gRPC |
-| `xmux` | Клиент | packet-up, stream-up | XMUX (toggle) | да: `maxConcurrency=16-32`; `maxConnections=0`; `cMaxReuseTimes=256-512`; `hMaxRequestTimes=600-900`; `hMaxReusableSecs=1800-3000`; `hKeepAlivePeriod=0` | Мультиплексирование H2/H3. Критично заполнять все ключевые поля |
+| `xmux` | Клиент | packet-up, stream-up | XMUX (toggle) | да: `maxConcurrency=0`; `maxConnections=6`; `cMaxReuseTimes=0`; `hMaxRequestTimes=600-900`; `hMaxReusableSecs=1800-3000`; `hKeepAlivePeriod=0` | Мультиплексирование H2/H3. Соответствует Xray-core v26.6.27 default anti-RKN |
 | `downloadSettings` | Клиент | stream-up | — (не в UI) | нет | Разделение upstream/downstream |
 | `headers` | Клиент | Все | Headers | частично: `User-Agent=chrome`; остальное — нет | Произвольные заголовки запроса |
 
