@@ -310,10 +310,10 @@ build_host_payload() {
         --argjson inbound_id "$1" \
         --arg domain "$2" \
         '{
-            inboundId: $inbound_id,
+            inboundIds: [$inbound_id],
+            hosts: [$domain],
             remark: "public",
             isDisabled: false,
-            address: $domain,
             port: 443,
             security: "tls",
             sni: $domain,
@@ -799,7 +799,7 @@ if ! echo "$HOSTS_PREFLIGHT_RESP" | jq_success; then
     MSG=$(echo "$HOSTS_PREFLIGHT_RESP" | jq -r '.msg // empty' 2>/dev/null || true)
     MSG=${MSG:-"Hosts API unavailable or unsupported"}
     echo -e "${R}[ERROR]${N} Hosts API preflight failed: $MSG"
-    echo -e "${R}[ERROR]${N} This installer requires 3x-ui v3.4.0/latest with /panel/api/hosts support."
+    echo -e "${R}[ERROR]${N} This installer requires 3x-ui v3.5.0+ with grouped /panel/api/hosts support."
     rm "$COOKIE_FILE"
     exit 1
 fi
@@ -831,29 +831,50 @@ if ! [[ "$XHTTP_ID" =~ ^[0-9]+$ ]]; then
     exit 1
 fi
 
-# 2. Create public Host row for subscription rendering
-echo "  Creating public Host row..."
+# 2. Create public Host group for subscription rendering
+echo "  Creating public Host group..."
 HOST_PAYLOAD=$(build_host_payload "$XHTTP_ID" "$DOMAIN")
 HOST_ADD_RESP=$(xui_json "http://127.0.0.1:2053/panel/api/hosts/add" "$HOST_PAYLOAD") || true
-if ! echo "$HOST_ADD_RESP" | jq -e --argjson inbound_id "$XHTTP_ID" '
+if ! echo "$HOST_ADD_RESP" | jq -e \
+    --argjson inbound_id "$XHTTP_ID" \
+    --arg domain "$DOMAIN" '
     .success == true
-    and ((.obj.id // 0) != 0)
-    and (.obj.inboundId == $inbound_id)
+    and ((.obj | type) == "array")
+    and ((.obj | length) == 1)
+    and ((.obj[0].id // 0) != 0)
+    and (((.obj[0].groupId // "") | length) > 0)
+    and (.obj[0].inboundId == $inbound_id)
+    and (.obj[0].address == $domain)
+    and (.obj[0].port == 443)
+    and (.obj[0].security == "tls")
+    and (.obj[0].sni == $domain)
+    and (.obj[0].fingerprint == "chrome")
+    and (((.obj[0].alpn // []) | index("h2")) != null)
+    and (((.obj[0].alpn // []) | index("http/1.1")) != null)
+    and (.obj[0].path == "")
 ' >/dev/null 2>&1; then
     MSG=$(echo "$HOST_ADD_RESP" | jq -r '.msg // empty' 2>/dev/null || true)
     MSG=${MSG:-"invalid Hosts API add response"}
-    echo -e "${R}[ERROR]${N} Host row creation failed: $MSG"
+    echo -e "${R}[ERROR]${N} Host group creation failed: $MSG"
     rm "$COOKIE_FILE"
     exit 1
 fi
+HOST_GROUP_ID=$(echo "$HOST_ADD_RESP" | jq -r '.obj[0].groupId')
 
 HOST_READBACK_RESP=$(xui_get_json "http://127.0.0.1:2053/panel/api/hosts/byInbound/$XHTTP_ID") || true
-if ! echo "$HOST_READBACK_RESP" | jq -e --arg domain "$DOMAIN" '
+if ! echo "$HOST_READBACK_RESP" | jq -e \
+    --argjson inbound_id "$XHTTP_ID" \
+    --arg group_id "$HOST_GROUP_ID" \
+    --arg domain "$DOMAIN" \
+    --arg host "$DOMAIN:443" '
     .success == true
+    and ((.obj | type) == "array")
     and (
         [.obj[]? | select(
-            (.isDisabled == false)
-            and (.address == $domain)
+            (.groupId == $group_id)
+            and (((.inboundIds // []) | index($inbound_id)) != null)
+            and (((.hosts // []) | index($host)) != null)
+            and (.isDisabled == false)
             and (.port == 443)
             and (.security == "tls")
             and (.sni == $domain)
@@ -868,7 +889,7 @@ if ! echo "$HOST_READBACK_RESP" | jq -e --arg domain "$DOMAIN" '
     rm "$COOKIE_FILE"
     exit 1
 fi
-echo -e "  ${G}Public Host row created${N}"
+echo -e "  ${G}Public Host group created${N}"
 
 # 3. Create subscription client and attach to XHTTP inbound
 echo "  Creating subscription client..."

@@ -38,7 +38,7 @@ cd /opt/serv
 - Зарегистрированный и делегированный домен, например `mydomain.com`, который указывает на ваш VPS.
 - VPS с root-доступом.
 - Docker и Docker Compose.
-- Серверная часть рассчитана на **3x-ui v3.4.0** и **Xray-core v26.6.22** (с поддержкой `vlessenc`).
+- Серверная часть рассчитана на **3x-ui v3.5.0+** и **Xray-core v26.6.22** (с поддержкой `vlessenc`).
 - Клиент должен быть совместим с **Xray-core v26.6.22** и поддерживать:
   - **VLESS Encryption**;
   - **XHTTP**;
@@ -285,7 +285,7 @@ Caddy TLS / публичная сеть :443
 | Параметр | Сторона | Режимы | 3x-ui UI | setup.sh | Описание |
 |---|---|---|---|---|---|
 | `path` | Оба | Все | Path | да: `/$XHTTP_PATH` | Сервер проверяет, клиент отправляет |
-| `host` | Оба | Все | Host | нет в `xhttpSettings`; Host row: address/SNI/port/TLS/fingerprint | Публичный host для подписок задаётся через Host row |
+| `host` | Оба | Все | Host | нет в `xhttpSettings`; Host group: hosts/inboundIds/SNI/port/TLS/fingerprint | Публичный host для подписок задаётся через Host group |
 | `mode` | Оба | Все | Mode | да: `stream-up` | Режим XHTTP |
 | `xPaddingBytes` | Оба | Все | Padding Bytes | да: `100-1000` | Размер случайного padding (диапазон, default: `"100-1000"`) |
 | `xPaddingObfsMode` | Оба | Все | Padding Obfs Mode | опц.: `true` | Включает обфускацию padding (bool) |
