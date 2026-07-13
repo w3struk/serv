@@ -346,6 +346,50 @@ build_client_payload() {
         }'
 }
 
+select_xhttp_inbound() {
+    jq -c '
+        def object_or_empty:
+            if type == "object" then .
+            elif type == "string" then (fromjson? // {})
+            else {} end;
+
+        [.obj[]?
+            | . as $inbound
+            | ($inbound.streamSettings | object_or_empty) as $stream
+            | select(
+                (($inbound.protocol // "") == "vless")
+                and (($inbound.listen // "") == "@uds_xhttp")
+                and ((($inbound.port // 0) | tostring) == "0")
+                and (($stream.network // "") == "xhttp")
+            )
+        ] as $candidates
+        | [$candidates[] | select((.remark // "") == "VLESS-XHTTP-Backend")] as $named
+        | {
+            candidateCount: ($candidates | length),
+            namedCount: ($named | length),
+            inbound: (
+                if ($named | length) == 1 then $named[0]
+                elif (($named | length) == 0 and ($candidates | length) == 1) then $candidates[0]
+                else null end
+            )
+        }
+    '
+}
+
+xhttp_inbound_has_vlessenc() {
+    jq -r '
+        def object_or_empty:
+            if type == "object" then .
+            elif type == "string" then (fromjson? // {})
+            else {} end;
+
+        (.inbound.settings | object_or_empty) as $settings
+        | if (((($settings.decryption // "") != "") and (($settings.decryption // "") != "none"))
+              and ((($settings.encryption // "") != "") and (($settings.encryption // "") != "none")))
+          then "true" else "false" end
+    '
+}
+
 # Check if docker services are running
 check_installed() {
     docker compose ls --filter "name=serv" 2>/dev/null | grep -q "serv" && return 0
@@ -443,20 +487,15 @@ add_client() {
 
     get_inbound_ids() {
         local csrf; csrf=$(csrf_token)
-        local resp; resp=$(curl -s --max-time 5 -b "$COOKIE_FILE" "http://127.0.0.1:2053${API_PREFIX}/panel/api/inbounds/list" \
-            -H "X-Requested-With: XMLHttpRequest" -H "X-CSRF-Token: $csrf")
-        ID_XHTTP=$(echo "$resp" | jq -r '.obj[]? | select(.remark == "VLESS-XHTTP-Backend") | .id' 2>/dev/null | head -1)
-        XHTTP_HAS_VLESSENC=$(echo "$resp" | jq -r '
-            def settings_obj:
-                if (.settings | type) == "string" then (.settings | fromjson? // {})
-                elif (.settings | type) == "object" then .settings
-                else {} end;
-            .obj[]? | select(.remark == "VLESS-XHTTP-Backend")
-            | settings_obj
-            | if (((.decryption // "") != "" and (.decryption // "") != "none")
-                  and ((.encryption // "") != "" and (.encryption // "") != "none"))
-              then "true" else "false" end
-        ' 2>/dev/null | head -1)
+        local resp
+        resp=$(curl -s --max-time 5 -b "$COOKIE_FILE" "http://127.0.0.1:2053${API_PREFIX}/panel/api/inbounds/list" \
+            -H "X-Requested-With: XMLHttpRequest" -H "X-CSRF-Token: $csrf") || resp=''
+        local selection
+        selection=$(printf '%s\n' "$resp" | select_xhttp_inbound 2>/dev/null) || selection=''
+        ID_XHTTP=$(printf '%s\n' "$selection" | jq -r '.inbound.id // empty' 2>/dev/null)
+        XHTTP_CANDIDATE_COUNT=$(printf '%s\n' "$selection" | jq -r '.candidateCount // 0' 2>/dev/null)
+        XHTTP_NAMED_COUNT=$(printf '%s\n' "$selection" | jq -r '.namedCount // 0' 2>/dev/null)
+        XHTTP_HAS_VLESSENC=$(printf '%s\n' "$selection" | xhttp_inbound_has_vlessenc 2>/dev/null)
     }
 
     gen_email() {
@@ -464,8 +503,8 @@ add_client() {
     }
 
     get_inbound_ids
-    if [ -z "$ID_XHTTP" ]; then
-        echo -e "${R}[ERROR]${N} XHTTP inbound (remark VLESS-XHTTP-Backend) was not found"
+    if ! [[ "$ID_XHTTP" =~ ^[0-9]+$ ]]; then
+        echo -e "${R}[ERROR]${N} Could not uniquely identify the XHTTP inbound (compatible: ${XHTTP_CANDIDATE_COUNT:-0}, preferred-name matches: ${XHTTP_NAMED_COUNT:-0})."
         rm "$COOKIE_FILE"
         exit 1
     fi
