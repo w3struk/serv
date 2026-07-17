@@ -1,0 +1,118 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="Локальный конвертер Xray JSON в outbounds формата sing-box-extended.">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'">
+  <meta name="referrer" content="no-referrer">
+  <title>Deepwork / Xray → sing-box</title>
+  <link rel="stylesheet" href="./styles.css">
+</head>
+<body>
+  <div class="page-shell">
+    <header class="site-header">
+      <a class="brand" href="./" aria-label="Deepwork, начало">
+        <span class="brand-mark" aria-hidden="true">D<span>/</span>W</span>
+        <span>deepwork</span>
+      </a>
+      <div class="header-note"><span class="status-dot" aria-hidden="true"></span> Работает в браузере</div>
+    </header>
+
+    <main>
+      <section class="hero" aria-labelledby="page-title">
+        <p class="eyebrow">ИНСТРУМЕНТ КОНВЕРТАЦИИ <span>02 / 02</span></p>
+        <h1 id="page-title">Из Xray —<br><em>в sing-box.</em></h1>
+        <p class="hero-copy">Перенесите поддерживаемые VLESS XHTTP-подключения в outbounds формата sing-box-extended без отправки данных на сервер.</p>
+        <div class="privacy-chip"><span class="lock-icon" aria-hidden="true">⌑</span><strong>Конфигурация обрабатывается локально.</strong><span>По сети она не передаётся. Копирование и скачивание — только по вашему действию; расширения браузера не входят в эту гарантию.</span></div>
+      </section>
+
+      <section class="workspace" aria-label="Конвертер конфигурации">
+        <div class="panel input-panel">
+          <div class="panel-heading">
+            <div>
+              <p class="panel-kicker">01 <span>исходник</span></p>
+              <h2>Вставьте Xray JSON</h2>
+            </div>
+            <span class="format-badge">JSON</span>
+          </div>
+          <div class="field-wrap">
+            <label for="xray-input">Конфигурация Xray</label>
+            <p class="field-help" id="input-help">Объект с массивом <code>outbounds</code>. До 1&nbsp;MiB.</p>
+            <textarea id="xray-input" name="xray-input" spellcheck="false" autocomplete="off" aria-describedby="input-help" placeholder="{
+  &quot;outbounds&quot;: [
+    {
+      &quot;protocol&quot;: &quot;vless&quot;,
+      &quot;settings&quot;: { ... }
+    }
+  ]
+}"></textarea>
+          </div>
+          <div class="panel-footer input-footer">
+            <span class="local-note"><span aria-hidden="true">⌁</span> Обрабатывается только на вашем устройстве</span>
+            <button class="button button-ghost" id="clear-button" type="button">Очистить</button>
+          </div>
+        </div>
+
+        <div class="convert-rail" aria-hidden="true"><span class="rail-line"></span><span class="arrow">↓</span></div>
+
+        <div class="panel output-panel">
+          <div class="panel-heading">
+            <div>
+              <p class="panel-kicker">02 <span>результат</span></p>
+              <h2>Готовый outbound</h2>
+            </div>
+            <span class="format-badge format-output">JSONC / JSON</span>
+          </div>
+          <div class="field-wrap output-wrap">
+            <label for="output-json">Результат конвертации</label>
+            <p class="field-help" id="output-help">Здесь появится объект <code>outbounds</code>.</p>
+            <textarea id="output-json" name="output-json" readonly spellcheck="false" aria-describedby="output-help" placeholder="Результат появится после конвертации"></textarea>
+            <div class="empty-state" id="empty-state"> <span class="empty-icon" aria-hidden="true">◌</span><span>Пока нечего показывать</span></div>
+          </div>
+          <div class="panel-footer output-footer">
+            <div class="output-actions" aria-label="Действия с результатом">
+              <button class="button button-primary" id="copy-button" type="button" disabled><span aria-hidden="true">□</span> Копировать</button>
+              <button class="button button-ghost" id="download-button" type="button" disabled><span aria-hidden="true">↓</span> Скачать .json</button>
+            </div>
+            <span class="output-meta" id="output-meta" role="status" aria-live="polite">Ожидает ввода</span>
+          </div>
+        </div>
+      </section>
+
+      <div class="convert-action">
+        <button class="button button-convert" id="convert-button" type="button"><span>Конвертировать</span><span class="button-arrow" aria-hidden="true">↗</span></button>
+        <p>Проверка выполняется перед созданием результата</p>
+      </div>
+
+      <section class="report" aria-labelledby="report-title">
+        <div class="report-topline">
+          <div><p class="panel-kicker">ОТЧЁТ ПРОВЕРКИ</p><h2 id="report-title">Диагностика</h2></div>
+          <span class="report-count" id="diagnostic-count">0 сообщений</span>
+        </div>
+        <div class="diagnostics diagnostics-empty" id="diagnostics" role="status">
+          <span class="report-icon" aria-hidden="true">✓</span>
+          <p>Сообщения появятся после запуска конвертации.</p>
+        </div>
+        <div class="diagnostics diagnostics-error" id="error-state" role="alert" hidden>
+          <span class="report-icon" aria-hidden="true">!</span>
+          <p><strong>Конвертация не выполнена.</strong><br>Проверьте сообщения и исправьте исходный JSON.</p>
+        </div>
+        <div class="diagnostics diagnostics-success" id="success-state" hidden>
+          <span class="report-icon" aria-hidden="true">✓</span>
+          <p><strong>Готово.</strong><br>Поддерживаемые outbounds собраны в новый объект.</p>
+        </div>
+      </section>
+
+      <section class="scope-grid" aria-labelledby="scope-title">
+        <div class="scope-intro"><p class="panel-kicker">ГРАНИЦЫ ИНСТРУМЕНТА</p><h2 id="scope-title">Что переносится</h2><p>Конвертер намеренно работает с узким, предсказуемым набором полей.</p></div>
+        <div class="scope-card supported"><span class="scope-sign" aria-hidden="true">+</span><div><h3>Поддерживается</h3><p>VLESS client outbound · XHTTP · TLS · UUID · server / port · headers · XMUX · параметры padding и сессии.</p></div></div>
+        <div class="scope-card deferred"><span class="scope-sign" aria-hidden="true">—</span><div><h3>Пока не переносится</h3><p>VMess, Trojan и Shadowsocks · server-shaped конфигурации · вложенный <code>settings.vnext</code> · неизвестные поля.</p></div></div>
+      </section>
+    </main>
+
+    <footer class="site-footer"><span>Deepwork / converter</span><span>Локальный инструмент · без аналитики</span></footer>
+  </div>
+  <script type="module" src="./app.js"></script>
+</body>
+</html>
