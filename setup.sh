@@ -302,8 +302,9 @@ build_xhttp_payload() {
                 sessionIDLength: "16-32",
                 scStreamUpServerSecs: "20-80",
                 scMaxBufferedPosts: 30,
+                enableXmux: true,
                 xmux: {
-                    maxConcurrency: 0,
+                    maxConcurrency: "",
                     maxConnections: "6",
                     cMaxReuseTimes: 0,
                     hMaxRequestTimes: "600-900",
