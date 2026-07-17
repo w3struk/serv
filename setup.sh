@@ -106,14 +106,30 @@ persist_firewall() {
             | debconf-set-selections 2>/dev/null || true
         if DEBIAN_FRONTEND=noninteractive apt-get install -y -qq iptables-persistent; then
             mkdir -p /etc/iptables
+            local v4_saved=false v6_saved=true
             if iptables-save > /etc/iptables/rules.v4 2>/dev/null; then
-                if command -v systemctl >/dev/null 2>&1 && systemctl enable netfilter-persistent >/dev/null 2>&1; then
-                    echo -e "  ${G}Firewall rules persisted (netfilter-persistent)${N}"
-                else
-                    echo -e "  ${Y}Warning:${N} Rules saved to /etc/iptables/rules.v4 but boot service could not be enabled; rules may not survive reboot."
-                fi
+                v4_saved=true
             else
-                echo -e "  ${Y}Warning:${N} iptables-persistent installed but rules save failed."
+                echo -e "  ${Y}Warning:${N} iptables-persistent installed but IPv4 rules save failed."
+            fi
+            if [ "${IPV6_FIREWALL_CONFIGURED:-false}" = "true" ]; then
+                if ip6tables-save > /etc/iptables/rules.v6 2>/dev/null; then
+                    v6_saved=true
+                else
+                    v6_saved=false
+                    echo -e "  ${Y}Warning:${N} IPv6 rules save failed."
+                fi
+            fi
+            if [ "$v4_saved" = "true" ] && [ "$v6_saved" = "true" ]; then
+                if command -v systemctl >/dev/null 2>&1 && systemctl enable netfilter-persistent >/dev/null 2>&1; then
+                    if [ "${IPV6_FIREWALL_CONFIGURED:-false}" = "true" ]; then
+                        echo -e "  ${G}Firewall rules persisted (IPv4 and IPv6, netfilter-persistent)${N}"
+                    else
+                        echo -e "  ${G}Firewall rules persisted (IPv4, netfilter-persistent)${N}"
+                    fi
+                else
+                    echo -e "  ${Y}Warning:${N} Rules were saved but boot service could not be enabled; rules may not survive reboot."
+                fi
             fi
         else
             echo -e "  ${Y}Warning:${N} Could not install iptables-persistent; rules will not survive reboot."
@@ -167,6 +183,8 @@ jq_all_success() {
     jq -s -e 'length > 0 and all(.[]; .success == true)' >/dev/null 2>&1
 }
 
+IPV6_FIREWALL_CONFIGURED=false
+
 # API helpers (use API_PREFIX for non-install modes like add-client)
 csrf_token() {
     curl -s --max-time 5 -b "$COOKIE_FILE" -c "$COOKIE_FILE" "http://127.0.0.1:2053${API_PREFIX}/csrf-token" \
@@ -177,11 +195,11 @@ xui_json() {
     local url="$1" json="$2"
     local token
     token=$(csrf_token)
-    curl -s --max-time 10 -b "$COOKIE_FILE" -c "$COOKIE_FILE" -X POST "$url" \
+    printf '%s' "$json" | curl -s --max-time 10 -b "$COOKIE_FILE" -c "$COOKIE_FILE" -X POST "$url" \
         -H "Content-Type: application/json" \
         -H "X-Requested-With: XMLHttpRequest" \
         -H "X-CSRF-Token: $token" \
-        -d "$json"
+        --data-binary @-
 }
 
 xui_get_json() {
@@ -195,16 +213,18 @@ xui_get_json() {
 
 xui_login() {
     local u="$1" p="$2"
-    local csrf
+    local csrf form
     csrf=$(csrf_token)
     [ -z "$csrf" ] && return 1
+    form=$(jq -nr --arg username "$u" --arg password "$p" \
+        '{username: $username, password: $password} | to_entries | map("\(.key)=\(.value | @uri)") | join("&")') || return 1
     local resp
-    resp=$(curl -s --max-time 10 -b "$COOKIE_FILE" -c "$COOKIE_FILE" \
+    resp=$(printf '%s' "$form" | curl -s --max-time 10 -b "$COOKIE_FILE" -c "$COOKIE_FILE" \
         -X POST "http://127.0.0.1:2053${API_PREFIX}/login" \
         -H "Content-Type: application/x-www-form-urlencoded; charset=UTF-8" \
         -H "X-Requested-With: XMLHttpRequest" \
         -H "X-CSRF-Token: $csrf" \
-        -d "username=$u&password=$p")
+        --data-binary @-)
     echo "$resp" | jq_success
 }
 
@@ -238,12 +258,40 @@ generate_vlessenc_pair() {
     VLESS_CLIENT_ENCRYPTION="$enc"
 }
 
+# Convert an uppercase ISO alpha-2 code to regional-indicator symbols.
+country_code_to_flag() {
+    local code="$1" first second
+    [[ "$code" =~ ^[A-Z]{2}$ ]] || return 1
+    printf -v first '\\U%08x' "$((0x1F1E6 + $(printf '%d' "'${code:0:1}") - 65))"
+    printf -v second '\\U%08x' "$((0x1F1E6 + $(printf '%d' "'${code:1:1}") - 65))"
+    printf -v first '%b' "$first"
+    printf -v second '%b' "$second"
+    [ -n "$first" ] && [ -n "$second" ] || return 1
+    printf '%s%s\n' "$first" "$second"
+}
+
+get_xhttp_remark() {
+    local country_code flag
+    # Keep only the validated code; the public IP response is never retained.
+    country_code=$(curl -4fsS --connect-timeout 3 --max-time 8 --retry 2 --retry-delay 1 --retry-max-time 20 \
+        'https://ipwho.is/' 2>/dev/null \
+        | jq -r 'select(.success == true and (.country_code | type) == "string" and (.country_code | test("^[A-Z]{2}$"))) | .country_code' \
+        2>/dev/null || true)
+    if flag=$(country_code_to_flag "$country_code") && [ -n "$flag" ]; then
+        printf '%s %s · VLESS-XHTTP\n' "$flag" "$country_code"
+    else
+        printf '%s\n' 'VLESS-XHTTP'
+    fi
+}
+
 build_xhttp_payload() {
     jq -nc \
         --arg path "/$1" \
         --arg advanced_obfs "$2" \
         --arg server_decryption "$3" \
-        --arg client_encryption "$4" '
+        --arg client_encryption "$4" \
+        --arg remark "$5" \
+        --arg listener "${6:-@uds_xhttp}" '
         def xhttp_settings:
             {
                 path: $path,
@@ -274,10 +322,10 @@ build_xhttp_payload() {
             up: 0,
             down: 0,
             total: 0,
-            remark: "VLESS-XHTTP-Backend",
+            remark: $remark,
             enable: true,
             expiryTime: 0,
-            listen: "@uds_xhttp",
+            listen: $listener,
             port: 0,
             protocol: "vless",
             settings: ({
@@ -363,7 +411,7 @@ select_xhttp_inbound() {
                 and (($stream.network // "") == "xhttp")
             )
         ] as $candidates
-        | [$candidates[] | select((.remark // "") == "VLESS-XHTTP-Backend")] as $named
+        | [$candidates[] | select((.remark // "") | contains("VLESS-XHTTP"))] as $named
         | {
             candidateCount: ($candidates | length),
             namedCount: ($named | length),
@@ -548,6 +596,439 @@ add_client() {
     rm "$COOKIE_FILE"
 }
 
+validate_modern_host_response() {
+    local response="$1" inbound_id="$2" group_id="$3"
+    echo "$response" | jq -e \
+        --argjson inbound_id "$inbound_id" \
+        --arg group_id "$group_id" \
+        --arg domain "$DOMAIN" '
+        .success == true
+        and ((.obj | type) == "array")
+        and ((.obj | length) == 1)
+        and ((.obj[0].id // 0) != 0)
+        and ((.obj[0].groupId // "") | length > 0)
+        and (.obj[0].inboundId == $inbound_id)
+        and (.obj[0].address == $domain)
+        and (.obj[0].port == 443)
+        and (.obj[0].security == "tls")
+        and (.obj[0].sni == $domain)
+        and (.obj[0].fingerprint == "chrome")
+        and (((.obj[0].alpn // []) | index("h2")) != null)
+        and (((.obj[0].alpn // []) | index("http/1.1")) != null)
+        and (.obj[0].path == "")
+        and ((.obj[0].groupId == $group_id) or ($group_id == ""))
+    ' >/dev/null 2>&1
+}
+
+modern_host_readback_valid() {
+    local response="$1" inbound_id="$2"
+    echo "$response" | jq -e \
+        --argjson inbound_id "$inbound_id" \
+        --arg domain "$DOMAIN" \
+        --arg host "$DOMAIN:443" '
+        .success == true
+        and ((.obj | type) == "array")
+        and ([.obj[]? | select(
+            ((.groupId // "") | length > 0)
+            and
+            (((.inboundIds // []) | index($inbound_id)) != null)
+            and (((.hosts // []) | index($host)) != null)
+            and (.isDisabled == false)
+            and (.port == 443)
+            and (.security == "tls")
+            and (.sni == $domain)
+            and (.fingerprint == "chrome")
+            and (((.alpn // []) | index("h2")) != null)
+            and (((.alpn // []) | index("http/1.1")) != null)
+            and (.path == "")
+        )] | length > 0)
+    ' >/dev/null 2>&1
+}
+
+modern_caddy_route_present() {
+    local path="$1"
+    awk -v domain="$DOMAIN" -v route_path="/${path}/*" '
+        function braces(s, n) { n=gsub(/\{/, "", s); n-=gsub(/\}/, "", s); return n }
+        !site && $1 == domain && $2 == "{" { site=1; sites++; depth=braces($0); next }
+        site {
+            if (!in_route && depth == 1 && $1 == "handle" && $2 == route_path && $3 == "{") in_route=1
+            if (in_route && $0 ~ /reverse_proxy[[:space:]]+unix\/@uds_xhttp_modern[[:space:]]*\{/) found=1
+            depth+=braces($0)
+            if (in_route && depth < 2) in_route=0
+            if (depth <= 0) site=0
+        }
+        END { exit !(sites == 1 && found) }
+    ' "$SERVER_DIR/Caddyfile"
+}
+
+caddy_target_is_unique() {
+    awk -v domain="$DOMAIN" '
+        function braces(s, n) { n=gsub(/\{/, "", s); n-=gsub(/\}/, "", s); return n }
+        !site && $1 == domain && $2 == "{" { site=1; sites++; depth=braces($0); next }
+        site {
+            if (depth == 1 && $0 ~ /^[[:space:]]*handle[[:space:]]*\{[[:space:]]*$/) catches++
+            depth+=braces($0)
+            if (depth <= 0) site=0
+        }
+        END { exit !(sites == 1 && catches == 1) }
+    ' "$SERVER_DIR/Caddyfile"
+}
+
+add_modern_caddy_route() {
+    local path="$1" backup="${2:-}" temp immediate_backup modern_route
+    modern_route=$(cat <<EOF
+    handle /${path}/* {
+        reverse_proxy unix/@uds_xhttp_modern {
+            header_up -X-Forwarded-For
+            flush_interval -1
+            transport http {
+                versions h2c 2
+                proxy_protocol v2
+            }
+        }
+    }
+EOF
+)
+    temp=$(mktemp "$SERVER_DIR/.Caddyfile.modern.XXXXXX") || return 1
+    if [ -z "$backup" ]; then
+        backup="$SERVER_DIR/Caddyfile.modern-backup.$(date +%Y%m%d%H%M%S).$$"
+        cp -p "$SERVER_DIR/Caddyfile" "$backup" || {
+            rm -f "$temp"
+            echo -e "${R}[ERROR]${N} Could not create Caddyfile backup"
+            return 1
+        }
+    elif [ ! -f "$backup" ]; then
+        rm -f "$temp"
+        echo -e "${R}[ERROR]${N} Caddyfile snapshot is missing: $backup"
+        return 1
+    fi
+    immediate_backup=$(mktemp "$SERVER_DIR/.Caddyfile.prewrite.XXXXXX") || {
+        rm -f "$temp"
+        echo -e "${R}[ERROR]${N} Could not create immediate Caddyfile backup"
+        return 1
+    }
+    if ! cp -p "$SERVER_DIR/Caddyfile" "$immediate_backup"; then
+        rm -f "$temp" "$immediate_backup"
+        echo -e "${R}[ERROR]${N} Could not capture immediate Caddyfile backup"
+        return 1
+    fi
+    if ! awk -v domain="$DOMAIN" -v route="$modern_route" '
+        function braces(s, n) { n=gsub(/\{/, "", s); n-=gsub(/\}/, "", s); return n }
+        !site && $1 == domain && $2 == "{" { site=1; sites++; depth=braces($0); print; next }
+        site && depth == 1 && $0 ~ /^[[:space:]]*handle[[:space:]]*\{[[:space:]]*$/ {
+            catches++
+            if (catches == 1) { printf "%s\n", route; inserted=1 }
+        }
+        { print }
+        site {
+            depth+=braces($0)
+            if (depth <= 0) site=0
+        }
+        END { if (sites != 1 || catches != 1 || !inserted) exit 1 }
+    ' "$SERVER_DIR/Caddyfile" > "$temp"; then
+        rm -f "$temp" "$immediate_backup"
+        echo -e "${R}[ERROR]${N} Could not prepare Caddyfile backup or route insertion"
+        return 1
+    fi
+    if ! cat "$temp" > "$SERVER_DIR/Caddyfile"; then
+        if cat "$immediate_backup" > "$SERVER_DIR/Caddyfile"; then
+            echo -e "${R}[ERROR]${N} Could not write mounted Caddyfile in place; immediate content restored (manual snapshot: $backup)"
+            rm -f "$temp" "$immediate_backup"
+        else
+            echo -e "${R}[ERROR]${N} Could not write mounted Caddyfile or restore it (immediate backup: $immediate_backup; manual snapshot: $backup)"
+            rm -f "$temp"
+        fi
+        return 1
+    fi
+    rm -f "$temp"
+    if ! docker exec caddy caddy validate --config /etc/caddy/Caddyfile >/dev/null 2>&1 \
+        || ! docker exec caddy caddy reload --config /etc/caddy/Caddyfile >/dev/null 2>&1; then
+        local restore_temp restored=false
+        restore_temp=$(mktemp "$SERVER_DIR/.Caddyfile.restore.XXXXXX") || true
+        if [ -n "$restore_temp" ] && cp -p "$immediate_backup" "$restore_temp"; then
+            if cat "$restore_temp" > "$SERVER_DIR/Caddyfile" \
+                && docker exec caddy caddy reload --config /etc/caddy/Caddyfile >/dev/null 2>&1; then
+                restored=true
+            fi
+            rm -f "$restore_temp"
+        fi
+        if [ "$restored" = "true" ]; then
+            rm -f "$immediate_backup"
+            echo -e "${R}[ERROR]${N} Caddy validation/reload failed; restored the immediate pre-write Caddyfile (manual snapshot: $backup)"
+        else
+            echo -e "${R}[ERROR]${N} Caddy validation/reload failed; automatic restoration failed (immediate backup: $immediate_backup; manual snapshot: $backup)"
+        fi
+        return 1
+    fi
+    rm -f "$immediate_backup"
+    echo -e "  ${G}Caddy route added and loaded${N} (manual snapshot: $backup)"
+}
+
+create_modern_snapshot() {
+    local stamp backup_dir db_path
+    db_path="$SERVER_DIR/3x-ui/db/x-ui.db"
+    stamp=$(date -u +%Y%m%dT%H%M%SZ)
+    install -d -m 700 -o root -g root /root/serv-backups || return 1
+    umask 077
+    backup_dir=$(mktemp -d "/root/serv-backups/add-modern-inbound-${stamp}.XXXXXX") || {
+        echo -e "${R}[ERROR]${N} Could not create collision-resistant backup directory"
+        return 1
+    }
+    if ! chown root:root "$backup_dir" || ! chmod 700 "$backup_dir"; then
+        echo -e "${R}[ERROR]${N} Could not secure root-owned backup directory"
+        return 1
+    fi
+    if ! sqlite3 "$db_path" ".backup '$backup_dir/x-ui.db'" >/dev/null 2>&1; then
+        echo -e "${R}[ERROR]${N} SQLite backup failed; no server changes were made"
+        return 1
+    fi
+    if ! cp -p "$SERVER_DIR/Caddyfile" "$backup_dir/Caddyfile"; then
+        echo -e "${R}[ERROR]${N} Caddyfile snapshot failed; no server changes were made"
+        return 1
+    fi
+    chmod 600 "$backup_dir/x-ui.db" "$backup_dir/Caddyfile" 2>/dev/null || true
+    MODERN_BACKUP_DIR="$backup_dir"
+    echo -e "  ${G}Backup snapshot:${N} $MODERN_BACKUP_DIR"
+}
+
+modern_valid_inbounds() {
+    jq -c '
+        [.obj[]? | . as $i
+         | ($i.streamSettings | if type == "string" then (fromjson? // {}) else . end) as $s
+         | ($i.settings | if type == "string" then (fromjson? // {}) else . end) as $v
+         | ($s.xhttpSettings // {}) as $x
+         | select(
+             ($i.protocol // "") == "vless"
+             and ($i.enable == true)
+             and ($i.listen // "") == "@uds_xhttp_modern"
+             and (($i.port // 0) | tostring) == "0"
+             and (($i.remark // "") | contains("VLESS-XHTTP-Modern"))
+             and ($s.network // "") == "xhttp"
+             and ($s.security // "") == "none"
+             and (($x.path // "") | test("^/?api/v[0-9]+$"))
+             and ($x.mode // "") == "stream-up"
+             and (($v.decryption // "") != "" and ($v.decryption // "") != "none")
+             and (($v.encryption // "") != "" and ($v.encryption // "") != "none")
+             and (($s.sockopt.acceptProxyProtocol // false) == true)
+             and (($s.sockopt.trustedXForwardedFor // []) == ["127.0.0.1/32"])
+         )]
+    '
+}
+
+add_modern_inbound() {
+    local lock_fd modern_list modern_count modern_id modern_path modern_remark
+    local stream_obj host_readback host_group_id host_add_response
+    local selected_path route_path path_candidate i host_ok route_ok
+    local modern_fully_verified=false modern_backup_created=false
+    local modern_listener_count valid_modern_list modern_id_readback
+
+    [ "$EUID" -eq 0 ] || { echo -e "${R}[ERROR]${N} Run as root"; return 1; }
+    command -v docker >/dev/null 2>&1 || { echo -e "${R}[ERROR]${N} docker is required"; return 1; }
+    command -v jq >/dev/null 2>&1 || { echo -e "${R}[ERROR]${N} jq is required"; return 1; }
+    command -v sqlite3 >/dev/null 2>&1 || { echo -e "${R}[ERROR]${N} sqlite3 is required"; return 1; }
+    command -v flock >/dev/null 2>&1 || { echo -e "${R}[ERROR]${N} flock is required"; return 1; }
+    command -v ss >/dev/null 2>&1 || { echo -e "${R}[ERROR]${N} ss is required"; return 1; }
+    command -v shuf >/dev/null 2>&1 || { echo -e "${R}[ERROR]${N} shuf is required"; return 1; }
+    command -v curl >/dev/null 2>&1 || { echo -e "${R}[ERROR]${N} curl is required"; return 1; }
+    command -v mktemp >/dev/null 2>&1 || { echo -e "${R}[ERROR]${N} mktemp is required"; return 1; }
+    [ -f "$SERVER_DIR/Caddyfile" ] || { echo -e "${R}[ERROR]${N} Caddyfile not found"; return 1; }
+    [ -f "$SERVER_DIR/3x-ui/db/x-ui.db" ] || { echo -e "${R}[ERROR]${N} Expected 3x-ui database not found: $SERVER_DIR/3x-ui/db/x-ui.db"; return 1; }
+    check_installed || { echo -e "${R}[ERROR]${N} Installation not found"; return 1; }
+    docker ps --format '{{.Names}}' | grep -qx caddy || { echo -e "${R}[ERROR]${N} caddy container is not running"; return 1; }
+    docker ps --format '{{.Names}}' | grep -qx 3xui_app || { echo -e "${R}[ERROR]${N} 3xui_app container is not running"; return 1; }
+    exec {lock_fd}>/var/lock/serv-add-modern-inbound.lock || { echo -e "${R}[ERROR]${N} Cannot open operation lock"; return 1; }
+    if ! flock -n "$lock_fd"; then
+        echo -e "${R}[ERROR]${N} Another add-modern-inbound operation is running"
+        return 1
+    fi
+
+    DOMAIN=$(caddy_redir_domain)
+    local ADM
+    ADM=$(caddy_admin_prefix_segment)
+    [ -n "$DOMAIN" ] && [ -n "$ADM" ] || { echo -e "${R}[ERROR]${N} Could not derive domain/admin path from Caddyfile"; return 1; }
+    if ! docker exec caddy caddy validate --config /etc/caddy/Caddyfile >/dev/null 2>&1; then
+        echo -e "${R}[ERROR]${N} Current Caddy configuration failed validation; no changes made"
+        return 1
+    fi
+    if ! caddy_target_is_unique; then
+        echo -e "${R}[ERROR]${N} Caddyfile must contain exactly one $DOMAIN site and one target catch-all; no changes made"
+        return 1
+    fi
+    API_PREFIX="/$ADM"
+    read -p "3x-ui Username: " XUI_USER
+    read -s -p "3x-ui Password: " XUI_PASS
+    echo ""
+    COOKIE_FILE=$(mktemp)
+    trap 'rm -f "${COOKIE_FILE:-}"' EXIT INT TERM
+    if ! xui_login "$XUI_USER" "$XUI_PASS"; then
+        echo -e "${R}[ERROR]${N} Login failed"
+        rm -f "$COOKIE_FILE"
+        return 1
+    fi
+    echo -e "${G}Logged in${N}"
+
+    HOSTS_PREFLIGHT_RESP=$(xui_get_json "http://127.0.0.1:2053${API_PREFIX}/panel/api/hosts/list" || true)
+    if ! echo "$HOSTS_PREFLIGHT_RESP" | jq_success; then
+        echo -e "${R}[ERROR]${N} Grouped Hosts API preflight failed; no changes made"
+        rm -f "$COOKIE_FILE"
+        return 1
+    fi
+    modern_list=$(xui_get_json "http://127.0.0.1:2053${API_PREFIX}/panel/api/inbounds/list" || true)
+    if ! echo "$modern_list" | jq -e '.success == true and (.obj | type) == "array"' >/dev/null 2>&1; then
+        echo -e "${R}[ERROR]${N} Could not read the inbound list; no changes made"
+        rm -f "$COOKIE_FILE"
+        return 1
+    fi
+    modern_listener_count=$(printf '%s\n' "$modern_list" | jq -r '[.obj[]? | select((.listen // "") == "@uds_xhttp_modern")] | length' 2>/dev/null || echo 0)
+    valid_modern_list=$(printf '%s\n' "$modern_list" | modern_valid_inbounds 2>/dev/null || echo '[]')
+    modern_count=$(printf '%s\n' "$valid_modern_list" | jq -r 'length' 2>/dev/null || echo 0)
+    if [ "$modern_count" -eq 0 ] && ss -xlp 2>/dev/null | grep -Fq '@uds_xhttp_modern'; then
+        echo -e "${R}[ERROR]${N} Active @uds_xhttp_modern socket exists without a valid modern inbound; no changes made"
+        rm -f "$COOKIE_FILE"
+        return 1
+    fi
+    if [ "$modern_listener_count" -ne "$modern_count" ]; then
+        echo -e "${R}[ERROR]${N} @uds_xhttp_modern listener collision or invalid inbound; no changes made"
+        rm -f "$COOKIE_FILE"
+        return 1
+    fi
+    if [ "$modern_count" -gt 1 ]; then
+        echo -e "${R}[ERROR]${N} Ambiguous modern inbound: $modern_count matches; no changes made"
+        rm -f "$COOKIE_FILE"
+        return 1
+    fi
+    if [ "$modern_count" -eq 1 ]; then
+        modern_id=$(printf '%s\n' "$valid_modern_list" | jq -r '.[0].id // empty' 2>/dev/null)
+        stream_obj=$(printf '%s\n' "$valid_modern_list" | jq -c '.[0].streamSettings
+            | if type == "string" then (fromjson? // {}) else . end
+        ' 2>/dev/null)
+        modern_path=$(printf '%s' "$stream_obj" | jq -r '.xhttpSettings.path // empty' 2>/dev/null)
+        modern_path=${modern_path#/}
+        if ! [[ "$modern_id" =~ ^[0-9]+$ && "$modern_path" =~ ^api/v[0-9]+$ ]]; then
+            echo -e "${R}[ERROR]${N} Existing modern inbound has invalid id or path"
+            rm -f "$COOKIE_FILE"
+            return 1
+        fi
+        if ! ss -xlp 2>/dev/null | grep -Fq '@uds_xhttp_modern'; then
+            echo -e "${R}[ERROR]${N} Existing modern inbound $modern_id is valid but @uds_xhttp_modern is not listening"
+            rm -f "$COOKIE_FILE"
+            return 1
+        fi
+        echo -e "  ${G}Existing modern inbound found${N} (ID $modern_id, path /$modern_path/)"
+    else
+        if ! create_modern_snapshot; then
+            rm -f "$COOKIE_FILE"
+            return 1
+        fi
+        modern_backup_created=true
+        modern_path=""
+        for i in {1..100}; do
+            path_candidate="api/v$(shuf -i 1-999999 -n 1)"
+            if ! grep -Eq "^[[:space:]]*handle[[:space:]]+/${path_candidate}(/|[[:space:]]|\*)" "$SERVER_DIR/Caddyfile"; then
+                modern_path="$path_candidate"
+                break
+            fi
+        done
+        [ -n "$modern_path" ] || { echo -e "${R}[ERROR]${N} Could not find an unused modern path"; rm -f "$COOKIE_FILE"; return 1; }
+        if ! generate_vlessenc_pair; then
+            rm -f "$COOKIE_FILE"
+            return 1
+        fi
+        modern_remark="$(get_xhttp_remark)"
+        modern_remark="${modern_remark%VLESS-XHTTP}VLESS-XHTTP-Modern"
+        modern_payload=$(build_xhttp_payload "$modern_path" false "$VLESS_SERVER_DECRYPTION" "$VLESS_CLIENT_ENCRYPTION" "$modern_remark" "@uds_xhttp_modern")
+        modern_response=$(xui_json "http://127.0.0.1:2053${API_PREFIX}/panel/api/inbounds/add" "$modern_payload" || true)
+        if ! echo "$modern_response" | jq_success; then
+            echo -e "${R}[ERROR]${N} Modern inbound creation failed (path /$modern_path/)"
+            rm -f "$COOKIE_FILE"
+            return 1
+        fi
+        modern_id=$(echo "$modern_response" | jq -r '.obj.id // empty')
+        if ! [[ "$modern_id" =~ ^[0-9]+$ ]]; then
+            echo -e "${R}[ERROR]${N} Modern inbound returned invalid ID (path /$modern_path/)"
+            rm -f "$COOKIE_FILE"
+            return 1
+        fi
+        echo -e "  ${G}Modern inbound created${N} (ID $modern_id, path /$modern_path/)"
+        modern_list=$(xui_get_json "http://127.0.0.1:2053${API_PREFIX}/panel/api/inbounds/list" || true)
+        valid_modern_list=$(printf '%s\n' "$modern_list" | modern_valid_inbounds 2>/dev/null || echo '[]')
+        modern_count=$(printf '%s\n' "$valid_modern_list" | jq -r 'length' 2>/dev/null || echo 0)
+        modern_id_readback=$(printf '%s\n' "$valid_modern_list" | jq -r '.[0].id // empty' 2>/dev/null)
+        modern_listener_count=$(printf '%s\n' "$modern_list" | jq -r '[.obj[]? | select((.listen // "") == "@uds_xhttp_modern")] | length' 2>/dev/null || echo 0)
+        if [ "$modern_count" -ne 1 ] || [ "$modern_listener_count" -ne 1 ] || [ "$modern_id_readback" != "$modern_id" ]; then
+            echo -e "${R}[ERROR]${N} Created inbound failed full validation (ID $modern_id; snapshot retained at $MODERN_BACKUP_DIR)"
+            rm -f "$COOKIE_FILE"
+            return 1
+        fi
+        for i in {1..20}; do
+            if ss -xlp 2>/dev/null | grep -Fq '@uds_xhttp_modern'; then break; fi
+            sleep 1
+        done
+        if ! ss -xlp 2>/dev/null | grep -Fq '@uds_xhttp_modern'; then
+            echo -e "${R}[ERROR]${N} Modern UDS socket not found (inbound ID $modern_id, path /$modern_path/)"
+            rm -f "$COOKIE_FILE"
+            return 1
+        fi
+    fi
+
+    if [ "$modern_fully_verified" != "true" ]; then
+        host_readback=$(xui_get_json "http://127.0.0.1:2053${API_PREFIX}/panel/api/hosts/byInbound/$modern_id" || true)
+        host_ok=false
+        modern_host_readback_valid "$host_readback" "$modern_id" && host_ok=true
+        route_ok=false
+        modern_caddy_route_present "$modern_path" && route_ok=true
+
+        if [ "$modern_count" -eq 1 ] && [ "$host_ok" = "true" ] && [ "$route_ok" = "true" ]; then
+            modern_fully_verified=true
+            echo -e "  ${G}Existing Host group and Caddy route verified${N}"
+        else
+            if [ "$modern_backup_created" != "true" ]; then
+                if ! create_modern_snapshot; then
+                    rm -f "$COOKIE_FILE"
+                    return 1
+                fi
+                modern_backup_created=true
+            fi
+            if [ "$host_ok" = "true" ]; then
+                echo -e "  ${G}Existing Host group verified${N}"
+            else
+                host_add_response=$(xui_json "http://127.0.0.1:2053${API_PREFIX}/panel/api/hosts/add" "$(build_host_payload "$modern_id" "$DOMAIN")" || true)
+                host_group_id=$(echo "$host_add_response" | jq -r '.obj[0].groupId // empty' 2>/dev/null)
+                host_readback=$(xui_get_json "http://127.0.0.1:2053${API_PREFIX}/panel/api/hosts/byInbound/$modern_id" || true)
+                if ! validate_modern_host_response "$host_add_response" "$modern_id" "$host_group_id"; then
+                    echo -e "${R}[ERROR]${N} Host group creation failed (inbound ID $modern_id; backup retained at $MODERN_BACKUP_DIR)"
+                    rm -f "$COOKIE_FILE"
+                    return 1
+                fi
+                if ! modern_host_readback_valid "$host_readback" "$modern_id"; then
+                    echo -e "${R}[ERROR]${N} Host readback invalid after creation (inbound ID $modern_id; backup retained at $MODERN_BACKUP_DIR)"
+                    rm -f "$COOKIE_FILE"
+                    return 1
+                fi
+                echo -e "  ${G}Host group created and verified${N}"
+            fi
+            if [ "$route_ok" = "false" ]; then
+                if grep -Eq "^[[:space:]]*handle[[:space:]]+/${modern_path}(/|[[:space:]]|\*)" "$SERVER_DIR/Caddyfile"; then
+                    echo -e "${R}[ERROR]${N} Caddy path collision for /$modern_path/ (inbound ID $modern_id; backup retained at $MODERN_BACKUP_DIR)"
+                    rm -f "$COOKIE_FILE"
+                    return 1
+                fi
+                add_modern_caddy_route "$modern_path" "$MODERN_BACKUP_DIR/Caddyfile" || { rm -f "$COOKIE_FILE"; return 1; }
+            else
+                echo -e "  ${G}Existing Caddy route verified${N}"
+            fi
+        fi
+    fi
+    echo ""
+    echo -e "${G}Modern inbound ready${N}"
+    echo -e "  Inbound ID: ${C}$modern_id${N}"
+    echo -e "  Path:       ${C}/$modern_path/${N}"
+    echo -e "  UDS:        ${C}@uds_xhttp_modern${N}"
+    echo -e "  VLESS Encryption: ${G}enabled${N}"
+    echo -e "  ${Y}Clients must be manually created/attached in the UI with the new subscription/profile.${N}"
+    rm -f "$COOKIE_FILE"
+}
+
 show_status() {
     print_banner
     echo -e "${B}Docker Containers:${N}"
@@ -637,6 +1118,7 @@ show_help() {
     echo "Commands:"
     echo -e "  (no args)      ${C}Full installation${N}  — setup everything from scratch"
     echo -e "  ${C}add-client${N}     ${Y}Add new client${N}      — add a client to existing installation"
+    echo -e "  ${C}add-modern-inbound${N} ${Y}Add modern inbound${N} — add a second VLESS/XHTTP inbound"
     echo -e "  ${C}status${N}         ${Y}Show status${N}         — display current configuration"
     echo -e "  ${C}help${N}           ${Y}Show help${N}"
     echo ""
@@ -657,6 +1139,11 @@ case "${1:-install}" in
         ensure_jq
         add_client
         exit 0
+        ;;
+    add-modern-inbound)
+        ensure_jq
+        add_modern_inbound
+        exit $?
         ;;
     status)
         check_installed || {
@@ -718,6 +1205,7 @@ CLIENT_ID=$(cat /proc/sys/kernel/random/uuid)
 SUB_ID=$(head -c 16 /dev/urandom | md5sum | head -c 16)
 CLIENT_SUFFIX=$(tr -dc 'a-z0-9' < /dev/urandom | head -c 10)
 CLIENT_EMAIL="client-$CLIENT_SUFFIX"
+XHTTP_REMARK=$(get_xhttp_remark)
 
 echo -e "${G}=== Configuration Summary ===${N}"
 echo -e "${Y}Domain:${N}      ${C}$DOMAIN${N}"
@@ -726,6 +1214,7 @@ echo -e "${Y}Sub path:${N}    /$SUB_PATH/"
 echo -e "${Y}JSON path:${N}   /$JSON_PATH/"
 echo -e "${Y}Clash path:${N}  /$CLASH_PATH/"
 echo -e "${Y}XHTTP path:${N}  /$XHTTP_PATH/"
+echo -e "${Y}XHTTP remark:${N} $XHTTP_REMARK"
 echo -e "${Y}XHTTP UUID:${N}  ${C}$CLIENT_ID${N}"
 echo -e "${Y}Advanced XHTTP padding:${N} $XHTTP_ADVANCED_OBFS"
 echo -e "${Y}VLESS Encryption:${N} enabled by default"
@@ -795,6 +1284,26 @@ iptables -A INPUT -p tcp --dport 443 -j ACCEPT
 iptables -A INPUT -p udp --dport 443 -j ACCEPT
 iptables -A INPUT -i lo -j ACCEPT
 iptables -P INPUT DROP
+
+# Configure IPv6 only when the host has a global IPv6 address.  Missing IPv6
+# tooling or an address must leave the existing IPv6 firewall untouched.
+if command -v ip >/dev/null 2>&1 && command -v ip6tables >/dev/null 2>&1 \
+    && ip -6 addr show scope global 2>/dev/null | grep -qE 'inet6 [^[:space:]]+ scope global'; then
+    ip6tables -P INPUT ACCEPT
+    ip6tables -F INPUT
+    ip6tables -A INPUT -i lo -j ACCEPT
+    ip6tables -A INPUT -m state --state RELATED,ESTABLISHED -j ACCEPT
+    ip6tables -A INPUT -p ipv6-icmp -j ACCEPT
+    ip6tables -A INPUT -p tcp --dport 22 -j ACCEPT
+    ip6tables -A INPUT -p tcp --dport 80 -j ACCEPT
+    ip6tables -A INPUT -p tcp --dport 443 -j ACCEPT
+    ip6tables -A INPUT -p udp --dport 443 -j ACCEPT
+    ip6tables -P INPUT DROP
+    IPV6_FIREWALL_CONFIGURED=true
+    echo -e "  ${G}IPv6 firewall configured${N}"
+else
+    echo -e "  ${Y}IPv6 firewall skipped (no global IPv6 address or IPv6 tooling unavailable)${N}"
+fi
 persist_firewall
 echo -e "  ${G}Firewall configured${N}"
 
@@ -856,7 +1365,7 @@ echo -e "  ${G}VLESS Encryption enabled${N} (${VLESS_FLOW})"
 
 # 1. Add XHTTP Backend (UDS @uds_xhttp, port 0)
 echo "  Adding XHTTP Backend inbound..."
-XHTTP_PAYLOAD=$(build_xhttp_payload "$XHTTP_PATH" "$XHTTP_ADVANCED_OBFS" "$VLESS_SERVER_DECRYPTION" "$VLESS_CLIENT_ENCRYPTION")
+XHTTP_PAYLOAD=$(build_xhttp_payload "$XHTTP_PATH" "$XHTTP_ADVANCED_OBFS" "$VLESS_SERVER_DECRYPTION" "$VLESS_CLIENT_ENCRYPTION" "$XHTTP_REMARK")
 XHTTP_RESP=$(xui_json "http://127.0.0.1:2053/panel/api/inbounds/add" "$XHTTP_PAYLOAD") || true
 if ! echo "$XHTTP_RESP" | jq_success; then
     echo -e "${R}[ERROR]${N} XHTTP Backend creation failed"
