@@ -1,4 +1,4 @@
 [submodule "vendor/3x-ui"]
 	path = vendor/3x-ui
-	url = https://github.com/MHSanaei/3x-ui.git
+	url = https://github.com/w3struk/3x-ui.git
 	branch = main
