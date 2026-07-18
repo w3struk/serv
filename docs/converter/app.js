@@ -119,11 +119,27 @@ function convert() {
   } catch (_) {
     result = { value: null, diagnostics: [{ severity: "fatal", code: "conversion_failed", path: "$", message: "Conversion failed." }] };
   }
-  const serialized = result.value === null ? "" : JSON.stringify(result.value, null, 2);
-  setOutput(serialized);
+  if (result.value === null) {
+    setOutput("");
+    renderDiagnostics(result.diagnostics);
+    showStatus("error");
+    outputMeta.textContent = "Результат не создан";
+    return;
+  }
+  if (result.value.outbounds.length !== 1) {
+    setOutput("");
+    renderDiagnostics([
+      ...result.diagnostics,
+      { severity: "fatal", code: "podkop_requires_one_outbound", path: "outbounds", message: "Для экспорта в Podkop нужен ровно один совместимый outbound." },
+    ]);
+    showStatus("error");
+    outputMeta.textContent = "Результат не создан";
+    return;
+  }
+  setOutput(JSON.stringify(result.value.outbounds[0], null, 2));
   renderDiagnostics(result.diagnostics);
-  showStatus(result.value === null ? "error" : "success");
-  outputMeta.textContent = result.value === null ? "Результат не создан" : `${result.value.outbounds.length} outbound${result.value.outbounds.length === 1 ? "" : "s"}`;
+  showStatus("success");
+  outputMeta.textContent = "Один outbound готов для Podkop";
 }
 
 async function copyOutput() {
@@ -154,7 +170,7 @@ function downloadOutput() {
     downloadUrl = url;
     const link = document.createElement("a");
     link.href = url;
-    link.download = "sing-box-extended-outbounds.json";
+    link.download = "podkop-outbound.json";
     document.body.append(link);
     try {
       link.click();

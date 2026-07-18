@@ -18,7 +18,7 @@
 
     <main>
       <section class="hero" aria-labelledby="page-title">
-        <p class="hero-copy">Перенесите поддерживаемые VLESS XHTTP-подключения в outbounds формата sing-box-extended.</p>
+        <p class="hero-copy">Подготовьте один поддерживаемый VLESS XHTTP-outbound для вставки в массив <code>outbounds</code> Podkop.</p>
       </section>
 
       <section class="workspace" aria-label="Конвертер конфигурации">
@@ -60,20 +60,20 @@
           <div class="panel-heading">
             <div>
               <p class="panel-kicker">02 <span>результат</span></p>
-              <h2>Готовый outbound</h2>
+              <h2>Outbound для Podkop</h2>
             </div>
-            <span class="format-badge format-output">JSONC / JSON</span>
+            <span class="format-badge format-output">RAW JSON</span>
           </div>
           <div class="field-wrap output-wrap">
             <label for="output-json">Результат конвертации</label>
-            <p class="field-help" id="output-help">Здесь появится объект <code>outbounds</code>.</p>
+            <p class="field-help" id="output-help">Один raw-объект для вставки как соседний элемент в <code>outbounds</code>.</p>
             <textarea id="output-json" name="output-json" readonly spellcheck="false" aria-describedby="output-help" placeholder="Результат появится после конвертации"></textarea>
             <div class="empty-state" id="empty-state"> <span class="empty-icon" aria-hidden="true">◌</span><span>Пока нечего показывать</span></div>
           </div>
           <div class="panel-footer output-footer">
             <div class="output-actions" aria-label="Действия с результатом">
               <button class="button button-primary" id="copy-button" type="button" disabled><span aria-hidden="true">□</span> Копировать</button>
-              <button class="button button-ghost" id="download-button" type="button" disabled><span aria-hidden="true">↓</span> Скачать .json</button>
+              <button class="button button-ghost" id="download-button" type="button" disabled><span aria-hidden="true">↓</span> Скачать outbound</button>
             </div>
             <span class="output-meta" id="output-meta" role="status" aria-live="polite">Ожидает ввода</span>
           </div>
@@ -96,11 +96,11 @@
         </div>
         <div class="diagnostics diagnostics-error" id="error-state" role="alert" hidden>
           <span class="report-icon" aria-hidden="true">!</span>
-          <p><strong>Конвертация не выполнена.</strong><br>Проверьте сообщения и исправьте исходный JSON.</p>
+          <p><strong>Экспорт не выполнен.</strong><br>Проверьте сообщения и исправьте исходный JSON.</p>
         </div>
         <div class="diagnostics diagnostics-success" id="success-state" hidden>
           <span class="report-icon" aria-hidden="true">✓</span>
-          <p><strong>Готово.</strong><br>Поддерживаемые outbounds собраны в новый объект.</p>
+          <p><strong>Готово.</strong><br>Один outbound подготовлен для вставки в Podkop.</p>
         </div>
       </section>
 
