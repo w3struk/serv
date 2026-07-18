@@ -7,21 +7,24 @@ export function convertXrayConfig(text) {
   const diagnostics = [];
   let fatalSeen = false;
   let diagnosticOverflow = false;
+  let sourceOutbounds = 0;
+  let selectedCandidates = 0;
+  let skipped = 0;
   const add = (severity, code, path, message) => { if (severity === "fatal") fatalSeen = true; if (diagnostics.length < MAX_DIAGNOSTICS - 2) diagnostics.push({ severity, code, path, message }); else diagnosticOverflow = true; };
   if (typeof text !== "string") {
     add("fatal", "invalid_input", "$", "Input must be JSON text.");
-    return result(null, diagnostics);
+    return result(null, diagnostics, true, false, sourceOutbounds, selectedCandidates, skipped);
   }
   let bytes;
   try { bytes = new TextEncoder().encode(text).length; } catch (_) { bytes = text.length; }
   if (bytes > MAX_BYTES) {
     add("fatal", "input_too_large", "$", "Input exceeds the 1 MiB limit.");
-    return result(null, diagnostics);
+    return result(null, diagnostics, true, false, sourceOutbounds, selectedCandidates, skipped);
   }
   let input;
   try { input = JSON.parse(text); } catch (_) {
     add("fatal", "malformed_json", "$", "Input is not valid JSON.");
-    return result(null, diagnostics);
+    return result(null, diagnostics, true, false, sourceOutbounds, selectedCandidates, skipped);
   }
   if (!input || Array.isArray(input) || typeof input !== "object" || !Array.isArray(input.outbounds)) {
     add("fatal", "invalid_input_shape", "$", "Input must be an object with an outbounds array.");
@@ -29,8 +32,9 @@ export function convertXrayConfig(text) {
   }
   if (input.outbounds.length > MAX_OUTBOUNDS) {
     add("fatal", "too_many_outbounds", "outbounds", "Input contains more than 32 outbounds.");
-    return result(null, diagnostics);
+    return result(null, diagnostics, true, false, input.outbounds.length, selectedCandidates, skipped);
   }
+  sourceOutbounds = input.outbounds.length;
 
   const candidates = [];
   let ignored = 0;
@@ -40,50 +44,56 @@ export function convertXrayConfig(text) {
     const s = o.settings, st = o.streamSettings;
     if (s && Object.prototype.hasOwnProperty.call(s, "vnext")) {
       add("warning", "unsupported_input_shape", `${p}.settings.vnext`, "Nested VLESS settings/client-outbound shape is not supported.");
+      ignored++;
       continue;
     }
-    if (!s || typeof s !== "object" || s.address === undefined || s.port === undefined || s.id === undefined) {
+    if (!s || typeof s !== "object" || Array.isArray(s)) {
       add("warning", "ignored_unsupported_vless", p, "VLESS outbound is not a flattened client outbound.");
+      ignored++;
       continue;
     }
     if (!st || st.network !== "xhttp" || st.security !== "tls") {
       add("warning", "ignored_unsupported_vless", `${p}.streamSettings`, "Only VLESS XHTTP over TLS client outbounds are supported.");
+      ignored++;
       continue;
     }
-    if (Object.prototype.hasOwnProperty.call(st, "tlsSettings") && !isContainer(st.tlsSettings)) add("fatal", "invalid_type", `${p}.streamSettings.tlsSettings`, "TLS settings must be an object.");
-    if (Object.prototype.hasOwnProperty.call(st, "xhttpSettings") && !isContainer(st.xhttpSettings)) add("fatal", "invalid_type", `${p}.streamSettings.xhttpSettings`, "XHTTP settings must be an object.");
-    if (isContainer(st.tlsSettings) && Object.prototype.hasOwnProperty.call(st.tlsSettings, "allowInsecure")) add("warning", "unsupported_field", `${p}.streamSettings.tlsSettings`, "Unsupported TLS field was ignored.");
-    unknownKeys(o, ["protocol","tag","settings","streamSettings","listen","port","decryption"], p, add);
-    unknownKeys(s, ["address","port","id","flow","encryption","vnext","decryption"], `${p}.settings`, add);
-    unknownKeys(st, ["network","security","tlsSettings","xhttpSettings"], `${p}.streamSettings`, add);
-    unknownKeys(st.tlsSettings, ["serverName","alpn","allowInsecure","fingerprint"], `${p}.streamSettings.tlsSettings`, add);
-    unknownKeys(st.xhttpSettings, ["path","mode","host","headers","xPaddingBytes","scMaxEachPostBytes","scMinPostsIntervalMs","sessionIDLength","uplinkChunkSize","sessionIDTable","sessionIDPlacement","sessionIDKey","seqPlacement","seqKey","uplinkDataPlacement","uplinkDataKey","uplinkHTTPMethod","noGRPCHeader","xPaddingMethod","xPaddingPlacement","xPaddingKey","xPaddingObfsMode","xPaddingHeader","xmux","decryption","scStreamUpServerSecs","scMaxBufferedPosts","noSSEHeader","serverMaxHeaderBytes","proxyProtocol","sniffing","allocation","fallback","serverName","certificate","key"], `${p}.streamSettings.xhttpSettings`, add);
-    unknownKeys(st.xhttpSettings && st.xhttpSettings.xmux, ["maxConnections","maxConcurrency","cMaxReuseTimes","hMaxRequestTimes","hMaxReusableSecs","hKeepAlivePeriod"], `${p}.streamSettings.xhttpSettings.xmux`, add);
-    if (Object.prototype.hasOwnProperty.call(o, "listen") || o.port === 0 || Object.prototype.hasOwnProperty.call(o, "decryption")) {
+    selectedCandidates++;
+    if (Object.prototype.hasOwnProperty.call(st, "tlsSettings") && !isContainer(st.tlsSettings)) fatal(add, `${p}.streamSettings.tlsSettings`, "invalid_type", "TLS settings must be an object.");
+    if (Object.prototype.hasOwnProperty.call(st, "xhttpSettings") && !isContainer(st.xhttpSettings)) fatal(add, `${p}.streamSettings.xhttpSettings`, "invalid_type", "XHTTP settings must be an object.");
+    unknownKeys(o, ["protocol","tag","settings","streamSettings","listen","port","decryption","mux"], p, add, true);
+    unknownKeys(s, ["address","port","id","flow","encryption","decryption","level"], `${p}.settings`, add, true);
+    unknownKeys(st, ["network","security","tlsSettings","xhttpSettings","decryption","serverName","certificate","key","fallback","sniffing","allocation"], `${p}.streamSettings`, add, true);
+    unknownKeys(st.tlsSettings, ["serverName","alpn","allowInsecure","fingerprint","settings","realitySettings","certificate","key"], `${p}.streamSettings.tlsSettings`, add, true);
+    unknownKeys(st.xhttpSettings, ["path","mode","host","headers","xPaddingBytes","scMaxEachPostBytes","scMinPostsIntervalMs","sessionIDLength","uplinkChunkSize","sessionIDTable","sessionIDPlacement","sessionIDKey","seqPlacement","seqKey","uplinkDataPlacement","uplinkDataKey","uplinkHTTPMethod","noGRPCHeader","xPaddingMethod","xPaddingPlacement","xPaddingKey","xPaddingObfsMode","xPaddingHeader","xmux","decryption","scStreamUpServerSecs","scMaxBufferedPosts","noSSEHeader","serverMaxHeaderBytes","proxyProtocol","sniffing","allocation","fallback","serverName","certificate","key"], `${p}.streamSettings.xhttpSettings`, add, true);
+    unknownKeys(st.xhttpSettings && st.xhttpSettings.xmux, ["maxConnections","maxConcurrency","cMaxReuseTimes","hMaxRequestTimes","hMaxReusableSecs","hKeepAlivePeriod"], `${p}.streamSettings.xhttpSettings.xmux`, add, true);
+    if (Object.prototype.hasOwnProperty.call(o, "listen") || Object.prototype.hasOwnProperty.call(o, "port") || Object.prototype.hasOwnProperty.call(o, "decryption") || Object.prototype.hasOwnProperty.call(o, "mux") || Object.prototype.hasOwnProperty.call(st, "listen") || Object.prototype.hasOwnProperty.call(st, "port")) {
       add("fatal", "server_input", p, "Server-shaped VLESS input is not accepted.");
     }
     if (Object.prototype.hasOwnProperty.call(s, "decryption")) add("fatal", "server_input", `${p}.settings`, "Server decryption is not accepted.");
+    if (Object.prototype.hasOwnProperty.call(st.xhttpSettings || {}, "xmux")) add("fatal", "unsupported_field", `${p}.streamSettings.xhttpSettings.xmux`, "XHTTP XMUX is deferred in this baseline.");
     candidates.push({ o, s, st, p });
   }
-  if (ignored) add("warning", "ignored_non_vless", "outbounds", "Non-VLESS outbounds were ignored.");
+  skipped = ignored;
+  if (ignored) add("warning", "ignored_non_vless", "outbounds", "Out-of-scope outbounds were skipped.");
   const tags = allocateTags(candidates);
   const converted = candidates.map((c, n) => convert(c, tags[n], add));
   if (!converted.length) add("fatal", "no_converted_outbounds", "outbounds", "No supported VLESS outbounds were found.");
   diagnostics.sort((a, b) => pathOrder(a.path) - pathOrder(b.path) || a.path.localeCompare(b.path) || a.code.localeCompare(b.code));
-  return result(fatalSeen ? null : { outbounds: converted }, diagnostics, fatalSeen, diagnosticOverflow);
+  return result(fatalSeen ? null : { outbounds: converted }, diagnostics, fatalSeen, diagnosticOverflow, sourceOutbounds, selectedCandidates, skipped);
 }
 
-function result(value, diagnostics, fatalSeen = diagnostics.some(d => d.severity === "fatal"), overflow = false) {
+function result(value, diagnostics, fatalSeen = diagnostics.some(d => d.severity === "fatal"), overflow = false, sourceOutbounds = 0, selectedCandidates = 0, skipped = 0) {
   if (overflow) {
     diagnostics.length = MAX_DIAGNOSTICS - 2;
     if (fatalSeen && !diagnostics.some(d => d.severity === "fatal")) diagnostics.unshift({ severity: "fatal", code: "fatal_summary", path: "$", message: "Conversion failed due to validation errors." });
     diagnostics.push({ severity: "warning", code: "diagnostics_truncated", path: "$", message: "Diagnostics were truncated." });
   }
-  return { value, diagnostics };
+  return { value, diagnostics, summary: { mode: "extraction_compatibility", source_outbounds: sourceOutbounds, selected_candidates: selectedCandidates, converted: value === null ? 0 : value.outbounds.length, skipped, state: fatalSeen ? "failure" : value !== null && skipped > 0 ? "partial" : "complete" } };
 }
-function unknownKeys(object, allowed, path, add) {
+function unknownKeys(object, allowed, path, add, fatalUnknown) {
   if (!object || typeof object !== "object" || Array.isArray(object)) return;
-  if (Object.keys(object).some(key => !allowed.includes(key))) add("warning", "unknown_field_summary", path, "Unknown fields were ignored.");
+  for (const key of Object.keys(object)) if (!allowed.includes(key)) add(fatalUnknown ? "fatal" : "warning", "unknown_field", `${path}.*`, "Unknown field is not supported.");
+  if (path.endsWith(".settings") && Object.prototype.hasOwnProperty.call(object, "level")) add("warning", "omitted_metadata", `${path}.level`, "The level metadata field was omitted.");
 }
 function isContainer(value) { return value !== null && typeof value === "object" && !Array.isArray(value); }
 function pathOrder(path) { const m = /outbounds\[(\d+)\]/.exec(path); return m ? Number(m[1]) : -1; }
@@ -135,7 +145,22 @@ function mapTls(tls, path, add) {
   const output = { enabled: true };
   if (nonempty(tls.serverName)) { if (typeof tls.serverName !== "string") fatal(add, `${path}.streamSettings.tlsSettings.serverName`, "invalid_type", "TLS server name must be a string."); else output.server_name = tls.serverName; }
   if (tls.alpn !== undefined) { if (!Array.isArray(tls.alpn) || !tls.alpn.every(value => typeof value === "string")) fatal(add, `${path}.streamSettings.tlsSettings.alpn`, "invalid_type", "TLS ALPN must be an array of strings."); else output.alpn = tls.alpn; }
-  if (nonempty(tls.fingerprint)) { if (typeof tls.fingerprint !== "string") fatal(add, `${path}.streamSettings.tlsSettings.fingerprint`, "invalid_type", "TLS fingerprint must be a string."); else output.utls = { enabled: true, fingerprint: tls.fingerprint }; }
+  const fingerprint = tls.fingerprint === undefined || tls.fingerprint === "" ? "chrome" : tls.fingerprint;
+  if (typeof fingerprint !== "string") fatal(add, `${path}.streamSettings.tlsSettings.fingerprint`, "invalid_type", "TLS fingerprint must be a string.");
+  else {
+    const canonical = { chrome: "chrome", firefox: "firefox", edge: "edge", safari: "safari", 360: "360", qq: "qq", ios: "ios", android: "android" };
+    const aliases = { hellochrome_auto: "chrome", hellofirefox_auto: "firefox", helloedge_auto: "edge", hellosafari_auto: "safari", hello360_auto: "360", helloqq_auto: "qq", helloios_auto: "ios", helloandroid_11_okhttp: "android" };
+    const normalized = fingerprint.toLowerCase();
+    if (canonical[normalized]) output.utls = { enabled: true, fingerprint: canonical[normalized] };
+    else if (aliases[normalized]) { output.utls = { enabled: true, fingerprint: aliases[normalized] }; add("warning", "normalized_fingerprint", `${path}.streamSettings.tlsSettings.fingerprint`, "A pinned source auto alias was normalized to a canonical target fingerprint."); }
+    else fatal(add, `${path}.streamSettings.tlsSettings.fingerprint`, "unsupported_fingerprint", "TLS fingerprint is not supported by the pinned baseline.");
+  }
+  if (Object.prototype.hasOwnProperty.call(tls, "allowInsecure")) {
+    if (typeof tls.allowInsecure !== "boolean") fatal(add, `${path}.streamSettings.tlsSettings.allowInsecure`, "invalid_type", "TLS allowInsecure must be boolean.");
+    else if (tls.allowInsecure) fatal(add, `${path}.streamSettings.tlsSettings.allowInsecure`, "invalid_tls", "Pinned Xray rejects allowInsecure=true.");
+  }
+  if (Object.prototype.hasOwnProperty.call(tls, "settings")) fatal(add, `${path}.streamSettings.tlsSettings.settings`, "unsupported_field", "TLS settings metadata is not supported.");
+  if (Object.prototype.hasOwnProperty.call(tls, "realitySettings")) fatal(add, `${path}.streamSettings.tlsSettings.realitySettings`, "unsupported_security", "Reality is deferred in this baseline.");
   return output;
 }
 function mapHeaders(transport, xhttp, path, add) {
@@ -170,8 +195,11 @@ function mapXmux(transport, xhttp, path, add) {
 function convert(c, tag, add) {
   const { o, s, st, p } = c, t = { type: "vless", tag, server: s.address, server_port: numericValue(s.port, `${p}.settings.port`, "Port", add, true), uuid: typeof s.id === "string" && /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(s.id) ? s.id : undefined };
   if (typeof s.address !== "string" || !s.address.trim() || /[\r\n]/.test(s.address) || t.server_port === undefined || t.server_port > 65535 || !t.uuid) fatal(add, p, "invalid_required_field", "Server, port, and UUID must be valid.");
-  if (nonempty(s.flow)) t.flow = enumValue(s.flow, ["xtls-rprx-vision"], `${p}.settings.flow`, "Flow", add);
-  if (nonempty(s.encryption)) { if (typeof s.encryption !== "string") fatal(add, `${p}.settings.encryption`, "invalid_type", "Encryption must be a string."); else if (s.encryption !== "none") t.encryption = s.encryption; }
+  if (nonempty(s.flow)) fatal(add, `${p}.settings.flow`, "unsupported_flow", "Non-empty VLESS flow is deferred in this baseline.");
+  if (Object.prototype.hasOwnProperty.call(s, "encryption")) {
+    if (typeof s.encryption !== "string") fatal(add, `${p}.settings.encryption`, "invalid_type", "Encryption must be a string.");
+    else if (s.encryption !== "none") fatal(add, `${p}.settings.encryption`, "unsupported_encryption", "VLESS encryption is deferred in this baseline.");
+  }
   const tls = isContainer(st.tlsSettings) ? st.tlsSettings : {}, x = isContainer(st.xhttpSettings) ? st.xhttpSettings : {};
   t.tls = mapTls(tls, p, add);
   const tr = t.transport = { type: "xhttp" };
@@ -205,9 +233,10 @@ function convert(c, tag, add) {
   }
   if (nonempty(x.xPaddingHeader)) { if (typeof x.xPaddingHeader !== "string") fatal(add, `${p}.streamSettings.xhttpSettings.xPaddingHeader`, "invalid_type", "Padding header must be a string."); else tr.x_padding_header = x.xPaddingHeader; }
   mapXmux(tr, x, p, add);
-  for (const k of ["scStreamUpServerSecs","scMaxBufferedPosts","noSSEHeader","serverMaxHeaderBytes","proxyProtocol","sniffing","allocation","fallback","serverName","certificate","key"]) {
+  for (const k of ["scStreamUpServerSecs","scMaxBufferedPosts","noSSEHeader","serverMaxHeaderBytes","proxyProtocol","sniffing","allocation","fallback","serverName","certificate","key","decryption"]) {
     const parent = Object.prototype.hasOwnProperty.call(x, k) ? `${p}.streamSettings.xhttpSettings` : Object.prototype.hasOwnProperty.call(st, k) ? `${p}.streamSettings` : Object.prototype.hasOwnProperty.call(o, k) ? p : null;
-    if (parent) add("warning", "server_only_field", parent, "Server-only or unrepresentable field was ignored.");
+    if (parent) fatal(add, `${parent}.${k}`, "server_input", "Server-only or unrepresentable field is not accepted.");
   }
+  for (const k of ["certificate", "key", "realitySettings"]) if (Object.prototype.hasOwnProperty.call(tls, k)) fatal(add, `${p}.streamSettings.tlsSettings.${k}`, "server_input", "Server-only TLS field is not accepted.");
   return t;
 }
