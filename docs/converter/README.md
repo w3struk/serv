@@ -6,7 +6,7 @@
 
 ## Вход и результат
 
-Вход — один JSON-объект до 1 МиБ с массивом верхнего уровня `outbounds` не длиннее 32 элементов. Это не универсальный импортёр Xray-конфигураций: принимается только описанный ниже клиентский поднабор. Результат всегда имеет оболочку:
+Вход — один JSON/JSONC-объект до 1 МиБ с массивом верхнего уровня `outbounds` не длиннее 32 элементов. Поддерживаются только безопасные комментарии `//` и `/*…*/` вне строк и trailing comma; URLs и другие строки не изменяются. Это не универсальный импортёр Xray-конфигураций: принимается только описанный ниже клиентский поднабор. Результат всегда имеет оболочку:
 
 ```json
 { "outbounds": [] }
@@ -67,13 +67,14 @@
 | `.streamSettings.xhttpSettings.mode` | `.transport.mode` | Обязателен: `auto`, `packet-up`, `stream-up` или `stream-one`. |
 | `.streamSettings.xhttpSettings.host` | `.transport.host` | Необязательная строка. `Host` нельзя передавать через `headers`. |
 | `.streamSettings.xhttpSettings.headers` | `.transport.headers` | Необязательная карта строк; имена и значения без CR/LF, ключ `Host` запрещён. |
-| `.streamSettings.xhttpSettings.{xPaddingBytes, scMaxEachPostBytes, scMinPostsIntervalMs, sessionIDLength, uplinkChunkSize}` | `.transport.{x_padding_bytes, sc_max_each_post_bytes, sc_min_posts_interval_ms, session_id_length, uplink_chunk_size}` | Число или диапазон `min-max`, нормализуется. `xPaddingBytes` обязателен и положителен; положительны также `scMaxEachPostBytes`, `sessionIDLength`, `uplinkChunkSize`. |
+| `.streamSettings.xhttpSettings.{xPaddingBytes, scMaxEachPostBytes, scMinPostsIntervalMs, sessionIDLength, uplinkChunkSize}` | `.transport.{x_padding_bytes, sc_max_each_post_bytes, sc_min_posts_interval_ms, session_id_length, uplink_chunk_size}` | Число или диапазон `min-max`, нормализуется. `xPaddingBytes` обязателен и сохраняется из источника; отсутствие, пустое/нулевое/некорректное значение отвергается. Положительны также `scMaxEachPostBytes`, `sessionIDLength`, `uplinkChunkSize`. |
 | `.streamSettings.xhttpSettings.{sessionIDTable, sessionIDPlacement, sessionIDKey, seqPlacement, seqKey}` | `.transport.{session_id_table, session_placement, session_key, seq_placement, seq_key}` | Строковые ключи; placement: `path`, `cookie`, `header`, `query`. |
 | `.streamSettings.xhttpSettings.{uplinkDataPlacement, uplinkDataKey, uplinkHTTPMethod, noGRPCHeader}` | `.transport.{uplink_data_placement, uplink_data_key, uplink_http_method, no_grpc_header}` | Placement: `auto`, `body`, `cookie`, `header`; method: `GET`/`POST`; `noGRPCHeader` — boolean. `GET`, `cookie` и `header` требуют `mode: "packet-up"`. |
 | `.streamSettings.xhttpSettings.{xPaddingMethod, xPaddingPlacement, xPaddingKey, xPaddingObfsMode, xPaddingHeader}` | `.transport.{x_padding_method, x_padding_placement, x_padding_key, x_padding_obfs_mode, x_padding_header}` | Method: `repeat-x`/`tokenish`; placement: `cookie`, `header`, `query`, `queryInHeader`; ключ и header — строки, obfs mode — boolean. |
 | `.streamSettings.xhttpSettings.xmux.maxConnections` | `.transport.xmux.max_connections` | Необязательное `0`, положительное число или положительный диапазон. |
 | `.streamSettings.xhttpSettings.xmux.maxConcurrency` | `.transport.xmux.max_concurrency` | Те же ограничения; нельзя задавать одновременно с положительным `maxConnections`. |
 | `.streamSettings.xhttpSettings.xmux.{cMaxReuseTimes, hMaxRequestTimes, hMaxReusableSecs, hKeepAlivePeriod}` | `.transport.xmux.{c_max_reuse_times, h_max_request_times, h_max_reusable_secs, h_keep_alive_period}` | Первые три — число/диапазон (`hMax*` положительны); `hKeepAlivePeriod` — целое `≥ 0`. |
+| `.streamSettings.xhttpSettings.downloadSettings` | `.transport.download` | Необязательный клиентский XHTTP: обязательны `address`, `port`, `network: "xhttp"`, `security: "tls"`/`"reality"` и `xhttpSettings.path`; поддерживаются те же клиентские поля, TLS/Reality-политики и проверки. Неизвестные/server-only поля фатальны. |
 
 ## Одобренный Reality-контракт
 
@@ -88,7 +89,7 @@ Reality принимается **только** при `streamSettings.security:
 
 ## Преднамеренные исключения
 
-Не поддерживаются VLESS URI, одиночный outbound или массив вместо объекта с `outbounds`, полный профиль, `detour`, произвольное преобразование Xray transport и иные протоколы. Вложенная клиентская форма `settings.vnext` также не принимается. Локальные верхнеуровневые `inbounds` игнорируются.
+Не поддерживаются VLESS URI, одиночный outbound или массив вместо объекта с `outbounds`, полный профиль, `detour`, произвольное преобразование Xray transport и иные протоколы. Вложенная клиентская форма `settings.vnext` также не принимается. Локальные верхнеуровневые `inbounds` и routing игнорируются. `enableXmux` — метаданные Xray: не выводится.
 
 Не-VLESS элементы пропускаются с одним итоговым предупреждением. VLESS с неподдерживаемым transport/security также пропускается с предупреждением. Напротив, любая ошибка в выбранном VLESS (обязательное поле, неизвестный ключ, недопустимое значение, конфликт `Host` или XMUX) делает весь результат недоступным.
 

@@ -44,6 +44,37 @@ test("maps Vision and validated VLESS encryption", () => {
   assert.equal(r.value.outbounds[0].encryption, encryption);
 });
 
+test("accepts official-example JSONC and preserves URL strings", () => {
+  const jsonc = `{
+    // official XHTTP client shape
+    "inbounds": [],
+    "outbounds": [{
+      "protocol": "vless",
+      "settings": { "address": "example.invalid", "port": 443, "id": "${id}" },
+      "streamSettings": {
+        "network": "xhttp",
+        "security": "tls",
+        "tlsSettings": { "serverName": "example.invalid", "alpn": ["h3"], },
+        "xhttpSettings": {
+          "path": "/xhttp?target=https://example.invalid/a//b",
+          "mode": "auto",
+          "xPaddingBytes": 1,
+          "headers": { "X-URL": "https://example.invalid/a//b" },
+        },
+      },
+    }],
+    /* routing is intentionally ignored */
+    "routing": { "domainStrategy": "AsIs" },
+  }`;
+  const r = convertXrayConfig(jsonc);
+  assert.equal(r.diagnostics.filter(d => d.severity === "fatal").length, 0);
+  const transport = r.value.outbounds[0].transport;
+  assert.equal(transport.path, "/xhttp?target=https://example.invalid/a//b");
+  assert.equal(transport.headers["X-URL"], "https://example.invalid/a//b");
+  assert.equal(transport.x_padding_bytes, 1);
+  assert.deepEqual(r.value.outbounds[0].tls.alpn, ["h3"]);
+});
+
 test("rejects unknown flow and invalid VLESS encryption", () => {
   const unknownFlow = run([base({ settings: { flow: "vision-but-not-exact" } })]);
   assert.equal(unknownFlow.value, null);
@@ -53,6 +84,42 @@ test("rejects unknown flow and invalid VLESS encryption", () => {
     assert.equal(r.value, null);
     assert.ok(r.diagnostics.some(d => d.code === "unsupported_encryption"));
   }
+});
+
+test("maps valid XHTTP download settings", () => {
+  const r = run([base({ xhttp: {
+    mode: "stream-up",
+    downloadSettings: {
+      address: "download.invalid",
+      port: 8443,
+      network: "xhttp",
+      security: "tls",
+      tlsSettings: { serverName: "download.invalid", alpn: ["h3"] },
+      xhttpSettings: { path: "/download", host: "download.invalid", xPaddingBytes: "2-4", scMinPostsIntervalMs: 30, noGRPCHeader: true, enableXmux: true }
+    }
+  } })]);
+  assert.equal(r.diagnostics.filter(d => d.severity === "fatal").length, 0);
+  const download = r.value.outbounds[0].transport.download;
+  assert.equal(download.server, "download.invalid");
+  assert.equal(download.server_port, 8443);
+  assert.equal(download.path, "/download");
+  assert.equal(download.x_padding_bytes, "2-4");
+  assert.equal(download.sc_min_posts_interval_ms, 30);
+  assert.equal(download.no_grpc_header, true);
+  assert.deepEqual(download.tls, { enabled: true, server_name: "download.invalid", alpn: ["h3"], utls: { enabled: true, fingerprint: "chrome" } });
+  assert.equal(Object.hasOwn(download, "enableXmux"), false);
+});
+
+test("rejects malformed and unknown download settings", () => {
+  const malformed = run([base({ xhttp: { downloadSettings: { address: "", port: 0, network: "xhttp", security: "tls", xhttpSettings: { path: "/download" } } } })]);
+  assert.equal(malformed.value, null);
+  assert.ok(malformed.diagnostics.some(d => d.code === "invalid_required_field"));
+  const unknown = run([base({ xhttp: { downloadSettings: { address: "download.invalid", port: 443, network: "xhttp", security: "tls", xhttpSettings: { path: "/download", unknownNestedField: true } } } })]);
+  assert.equal(unknown.value, null);
+  assert.ok(unknown.diagnostics.some(d => d.code === "unknown_field"));
+  const wrongShape = run([base({ xhttp: { downloadSettings: { address: "download.invalid", port: 443, network: "tcp", security: "tls", xhttpSettings: { path: "/download" } } } })]);
+  assert.equal(wrongShape.value, null);
+  assert.ok(wrongShape.diagnostics.some(d => d.code === "invalid_enum"));
 });
 
 test("normalizes ranges and XMUX, and enforces exclusivity", () => {

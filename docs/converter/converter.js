@@ -22,7 +22,7 @@ export function convertXrayConfig(text) {
     return result(null, diagnostics, true, false, sourceOutbounds, selectedCandidates, skipped);
   }
   let input;
-  try { input = JSON.parse(text); } catch (_) {
+  try { input = JSON.parse(parseJsonc(text)); } catch (_) {
     add("fatal", "malformed_json", "$", "Input is not valid JSON.");
     return result(null, diagnostics, true, false, sourceOutbounds, selectedCandidates, skipped);
   }
@@ -64,7 +64,7 @@ export function convertXrayConfig(text) {
     unknownKeys(s, ["address","port","id","flow","encryption","decryption","level"], `${p}.settings`, add, true);
     unknownKeys(st, ["network","security","tlsSettings","xhttpSettings","decryption","serverName","certificate","key","fallback","sniffing","allocation"], `${p}.streamSettings`, add, true);
     unknownKeys(st.tlsSettings, ["serverName","alpn","allowInsecure","fingerprint","settings","realitySettings","certificate","key"], `${p}.streamSettings.tlsSettings`, add, true);
-    unknownKeys(st.xhttpSettings, ["path","mode","host","headers","xPaddingBytes","scMaxEachPostBytes","scMinPostsIntervalMs","sessionIDLength","uplinkChunkSize","sessionIDTable","sessionIDPlacement","sessionIDKey","seqPlacement","seqKey","uplinkDataPlacement","uplinkDataKey","uplinkHTTPMethod","noGRPCHeader","xPaddingMethod","xPaddingPlacement","xPaddingKey","xPaddingObfsMode","xPaddingHeader","xmux","decryption","scStreamUpServerSecs","scMaxBufferedPosts","noSSEHeader","serverMaxHeaderBytes","proxyProtocol","sniffing","allocation","fallback","serverName","certificate","key"], `${p}.streamSettings.xhttpSettings`, add, true);
+    unknownKeys(st.xhttpSettings, ["path","mode","host","headers","xPaddingBytes","scMaxEachPostBytes","scMinPostsIntervalMs","sessionIDLength","uplinkChunkSize","sessionIDTable","sessionIDPlacement","sessionIDKey","seqPlacement","seqKey","uplinkDataPlacement","uplinkDataKey","uplinkHTTPMethod","noGRPCHeader","xPaddingMethod","xPaddingPlacement","xPaddingKey","xPaddingObfsMode","xPaddingHeader","xmux","enableXmux","downloadSettings","decryption","scStreamUpServerSecs","scMaxBufferedPosts","noSSEHeader","serverMaxHeaderBytes","proxyProtocol","sniffing","allocation","fallback","serverName","certificate","key"], `${p}.streamSettings.xhttpSettings`, add, true);
     unknownKeys(st.xhttpSettings && st.xhttpSettings.xmux, ["maxConnections","maxConcurrency","cMaxReuseTimes","hMaxRequestTimes","hMaxReusableSecs","hKeepAlivePeriod"], `${p}.streamSettings.xhttpSettings.xmux`, add, true);
     if (Object.prototype.hasOwnProperty.call(o, "listen") || Object.prototype.hasOwnProperty.call(o, "port") || Object.prototype.hasOwnProperty.call(o, "decryption") || Object.prototype.hasOwnProperty.call(o, "mux") || Object.prototype.hasOwnProperty.call(st, "listen") || Object.prototype.hasOwnProperty.call(st, "port")) {
       add("fatal", "server_input", p, "Server-shaped VLESS input is not accepted.");
@@ -88,6 +88,29 @@ function result(value, diagnostics, fatalSeen = diagnostics.some(d => d.severity
     diagnostics.push({ severity: "warning", code: "diagnostics_truncated", path: "$", message: "Diagnostics were truncated." });
   }
   return { value, diagnostics, summary: { mode: "extraction_compatibility", source_outbounds: sourceOutbounds, selected_candidates: selectedCandidates, converted: value === null ? 0 : value.outbounds.length, skipped, state: fatalSeen ? "failure" : value !== null && skipped > 0 ? "partial" : "complete" } };
+}
+function parseJsonc(text) {
+  let output = "", quote = false, escape = false, lineComment = false, blockComment = false;
+  for (let i = 0; i < text.length; i++) {
+    const c = text[i], next = text[i + 1];
+    if (lineComment) { if (c === "\n" || c === "\r") { lineComment = false; output += c; } continue; }
+    if (blockComment) { if (c === "*" && next === "/") { blockComment = false; i++; output += "  "; } else if (c === "\n" || c === "\r") output += c; else output += " "; continue; }
+    if (quote) { output += c; if (escape) escape = false; else if (c === "\\") escape = true; else if (c === '"') quote = false; continue; }
+    if (c === '"') { quote = true; output += c; continue; }
+    if (c === "/" && next === "/") { lineComment = true; i++; continue; }
+    if (c === "/" && next === "*") { blockComment = true; i++; output += "  "; continue; }
+    output += c;
+  }
+  if (quote || escape || blockComment) throw new Error("malformed JSONC");
+  let resultText = "", inString = false, escaped = false;
+  for (let i = 0; i < output.length; i++) {
+    const c = output[i];
+    if (inString) { resultText += c; if (escaped) escaped = false; else if (c === "\\") escaped = true; else if (c === '"') inString = false; continue; }
+    if (c === '"') { inString = true; resultText += c; continue; }
+    if (c === ",") { let j = i + 1; while (/\s/.test(output[j] || "")) j++; if (output[j] === "}" || output[j] === "]") continue; }
+    resultText += c;
+  }
+  return resultText;
 }
 function unknownKeys(object, allowed, path, add, fatalUnknown) {
   if (!object || typeof object !== "object" || Array.isArray(object)) return;
@@ -213,7 +236,7 @@ function mapHeaders(transport, xhttp, path, add) {
 function mapRanges(transport, xhttp, path, add) {
   const fields = [["xPaddingBytes","x_padding_bytes",true],["scMaxEachPostBytes","sc_max_each_post_bytes",true],["scMinPostsIntervalMs","sc_min_posts_interval_ms",false],["sessionIDLength","session_id_length",true],["uplinkChunkSize","uplink_chunk_size",true]];
   for (const [source, target, positive] of fields) { const value = range(xhttp[source], `${path}.streamSettings.xhttpSettings.${source}`, source, add, positive); if (value !== undefined) transport[target] = value; }
-  if (!nonempty(xhttp.xPaddingBytes)) fatal(add, `${path}.streamSettings.xhttpSettings.xPaddingBytes`, "invalid_required_field", "XHTTP padding bytes are required.");
+  if (!nonempty(xhttp.xPaddingBytes)) fatal(add, `${path}.streamSettings.xhttpSettings.xPaddingBytes`, "invalid_required_field", "XHTTP padding bytes are required and cannot be disabled.");
 }
 function mapXmux(transport, xhttp, path, add) {
   if (xhttp.xmux !== undefined && (!xhttp.xmux || typeof xhttp.xmux !== "object" || Array.isArray(xhttp.xmux))) { fatal(add, `${path}.streamSettings.xhttpSettings.xmux`, "invalid_type", "XMUX must be an object."); return; }
@@ -241,6 +264,51 @@ function validEncryption(value) {
     else if (keySeen) return false;
   }
   return keySeen;
+}
+function mapDownload(download, d, path, mode, add) {
+  const allowed = ["address", "port", "network", "security", "tlsSettings", "xhttpSettings"];
+  unknownKeys(d, allowed, `${path}.downloadSettings`, add, true);
+  if (mode !== "stream-up") fatal(add, `${path}.downloadSettings`, "invalid_combination", "Download settings require stream-up mode.");
+  if (typeof d.address !== "string" || !d.address.trim() || /[\r\n]/.test(d.address)) fatal(add, `${path}.downloadSettings.address`, "invalid_required_field", "Download server address must be valid.");
+  else download.server = d.address;
+  const port = numericValue(d.port, `${path}.downloadSettings.port`, "Download port", add, true);
+  if (port === undefined || port > 65535) fatal(add, `${path}.downloadSettings.port`, "invalid_required_field", "Download server port must be valid.");
+  else download.server_port = port;
+  if (d.network !== "xhttp") fatal(add, `${path}.downloadSettings.network`, "invalid_enum", "Download network must be xhttp.");
+  if (!["tls", "reality"].includes(d.security)) fatal(add, `${path}.downloadSettings.security`, "invalid_enum", "Download security must be tls or reality.");
+  if (!isContainer(d.xhttpSettings)) { fatal(add, `${path}.downloadSettings.xhttpSettings`, "invalid_type", "Download XHTTP settings must be an object."); return; }
+  const x = d.xhttpSettings, xPath = `${path}.downloadSettings.xhttpSettings`;
+  unknownKeys(x, ["path","mode","host","headers","xPaddingBytes","scMaxEachPostBytes","scMinPostsIntervalMs","sessionIDLength","uplinkChunkSize","sessionIDTable","sessionIDPlacement","sessionIDKey","seqPlacement","seqKey","uplinkDataPlacement","uplinkDataKey","uplinkHTTPMethod","noGRPCHeader","xPaddingMethod","xPaddingPlacement","xPaddingKey","xPaddingObfsMode","xPaddingHeader","xmux","enableXmux"], xPath, add, true);
+  if (typeof x.path !== "string" || !x.path.startsWith("/")) fatal(add, `${xPath}.path`, "invalid_required_field", "Download XHTTP path must begin with '/'."); else download.path = x.path;
+  if (x.mode !== undefined && enumValue(x.mode, ["auto", "packet-up", "stream-up", "stream-one"], `${xPath}.mode`, "Download XHTTP mode", add) !== mode) fatal(add, `${xPath}.mode`, "invalid_combination", "Download XHTTP mode must match the outbound mode.");
+  if (nonempty(x.host)) { if (typeof x.host !== "string") fatal(add, `${xPath}.host`, "invalid_type", "Download XHTTP host must be a string."); else download.host = x.host; }
+  mapHeaders(download, x, path, add);
+  mapRanges(download, x, path, add);
+  for (const [a,b] of [["sessionIDTable","session_id_table"],["sessionIDPlacement","session_placement"],["sessionIDKey","session_key"],["seqPlacement","seq_placement"],["seqKey","seq_key"],["uplinkDataPlacement","uplink_data_placement"],["uplinkDataKey","uplink_data_key"],["uplinkHTTPMethod","uplink_http_method"],["noGRPCHeader","no_grpc_header"]]) {
+    if (!nonempty(x[a])) continue; let v=x[a];
+    if (["sessionIDTable","sessionIDKey","seqKey","uplinkDataKey"].includes(a) && typeof v !== "string") { fatal(add, `${xPath}.${a}`, "invalid_type", "XHTTP key fields must be strings."); continue; }
+    if (a === "sessionIDPlacement" || a === "seqPlacement") v=enumValue(v,["path","cookie","header","query"],`${xPath}.${a}`,a,add);
+    else if (a === "uplinkDataPlacement") v=enumValue(v,["auto","body","cookie","header"],`${xPath}.${a}`,a,add);
+    else if (a === "uplinkHTTPMethod") v=enumValue(v,["GET","POST"],`${xPath}.${a}`,a,add);
+    else if (a === "noGRPCHeader" && typeof v !== "boolean") { fatal(add, `${xPath}.${a}`, "invalid_type", "Field must be boolean."); v=undefined; }
+    if(v!==undefined) download[b]=v;
+  }
+  if ((x.uplinkHTTPMethod === "GET" || x.uplinkDataPlacement === "cookie" || x.uplinkDataPlacement === "header") && mode !== "packet-up") fatal(add, xPath, "invalid_combination", "This uplink setting requires packet-up mode.");
+  for (const [a,b] of [["xPaddingMethod","x_padding_method"],["xPaddingPlacement","x_padding_placement"],["xPaddingKey","x_padding_key"]]) {
+    if (!nonempty(x[a])) continue; let v=x[a];
+    if ((a === "xPaddingKey" || a === "xPaddingPlacement") && typeof v !== "string") { fatal(add, `${xPath}.${a}`, "invalid_type", "Padding field must be a string."); continue; }
+    if (a === "xPaddingMethod") v=enumValue(v,["repeat-x","tokenish"],`${xPath}.${a}`,a,add);
+    if (a === "xPaddingPlacement") v=enumValue(v,["cookie","header","query","queryInHeader"],`${xPath}.${a}`,a,add);
+    if(v!==undefined) download[b]=v;
+  }
+  if (nonempty(x.xPaddingObfsMode)) { if (typeof x.xPaddingObfsMode !== "boolean") fatal(add, `${xPath}.xPaddingObfsMode`, "invalid_type", "Padding obfuscation mode must be boolean."); else download.x_padding_obfs_mode=x.xPaddingObfsMode; }
+  if (nonempty(x.xPaddingHeader)) { if (typeof x.xPaddingHeader !== "string") fatal(add, `${xPath}.xPaddingHeader`, "invalid_type", "Padding header must be a string."); else download.x_padding_header=x.xPaddingHeader; }
+  mapXmux(download, x, path, add);
+  if (Object.prototype.hasOwnProperty.call(x, "enableXmux")) add("warning", "omitted_metadata", `${xPath}.enableXmux`, "The metadata field was omitted.");
+  if (d.tlsSettings !== undefined && !isContainer(d.tlsSettings)) fatal(add, `${path}.downloadSettings.tlsSettings`, "invalid_type", "Download TLS settings must be an object.");
+  unknownKeys(d.tlsSettings, ["serverName","alpn","allowInsecure","fingerprint","settings","realitySettings"], `${path}.downloadSettings.tlsSettings`, add, true);
+  if (!["tls", "reality"].includes(d.security)) return;
+  download.tls = mapTls(isContainer(d.tlsSettings) ? d.tlsSettings : {}, path, add, d.security === "reality");
 }
 function convert(c, tag, add) {
   const { o, s, st, p } = c, t = { type: "vless", tag, server: s.address, server_port: numericValue(s.port, `${p}.settings.port`, "Port", add, true), uuid: typeof s.id === "string" && /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(s.id) ? s.id : undefined };
@@ -289,6 +357,11 @@ function convert(c, tag, add) {
   }
   if (nonempty(x.xPaddingHeader)) { if (typeof x.xPaddingHeader !== "string") fatal(add, `${p}.streamSettings.xhttpSettings.xPaddingHeader`, "invalid_type", "Padding header must be a string."); else tr.x_padding_header = x.xPaddingHeader; }
   mapXmux(tr, x, p, add);
+  if (Object.prototype.hasOwnProperty.call(x, "enableXmux")) add("warning", "omitted_metadata", `${p}.streamSettings.xhttpSettings.enableXmux`, "The metadata field was omitted.");
+  if (Object.prototype.hasOwnProperty.call(x, "downloadSettings")) {
+    if (!isContainer(x.downloadSettings)) fatal(add, `${p}.streamSettings.xhttpSettings.downloadSettings`, "invalid_type", "Download settings must be an object.");
+    else { tr.download = {}; mapDownload(tr.download, x.downloadSettings, `${p}.streamSettings.xhttpSettings`, tr.mode, add); }
+  }
   for (const k of ["scStreamUpServerSecs","scMaxBufferedPosts","noSSEHeader","serverMaxHeaderBytes","proxyProtocol","sniffing","allocation","fallback","serverName","certificate","key","decryption"]) {
     const parent = Object.prototype.hasOwnProperty.call(x, k) ? `${p}.streamSettings.xhttpSettings` : Object.prototype.hasOwnProperty.call(st, k) ? `${p}.streamSettings` : Object.prototype.hasOwnProperty.call(o, k) ? p : null;
     if (parent) fatal(add, `${parent}.${k}`, "server_input", "Server-only or unrepresentable field is not accepted.");
