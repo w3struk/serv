@@ -52,8 +52,8 @@ export function convertXrayConfig(text) {
       ignored++;
       continue;
     }
-    if (!st || st.network !== "xhttp" || st.security !== "tls") {
-      add("warning", "ignored_unsupported_vless", `${p}.streamSettings`, "Only VLESS XHTTP over TLS client outbounds are supported.");
+    if (!st || st.network !== "xhttp" || !["tls", "reality"].includes(st.security)) {
+      add("warning", "ignored_unsupported_vless", `${p}.streamSettings`, "Only VLESS XHTTP over TLS or Reality client outbounds are supported.");
       ignored++;
       continue;
     }
@@ -140,7 +140,7 @@ function enumValue(v, allowed, p, name, add) {
   if (!allowed.includes(v)) { fatal(add, p, "invalid_enum", `${name} has an unsupported value.`); return undefined; }
   return v;
 }
-function mapTls(tls, path, add) {
+function mapTls(tls, path, add, realitySecurity = false) {
   const output = { enabled: true };
   if (nonempty(tls.serverName)) { if (typeof tls.serverName !== "string") fatal(add, `${path}.streamSettings.tlsSettings.serverName`, "invalid_type", "TLS server name must be a string."); else output.server_name = tls.serverName; }
   if (tls.alpn !== undefined) { if (!Array.isArray(tls.alpn) || !tls.alpn.every(value => typeof value === "string")) fatal(add, `${path}.streamSettings.tlsSettings.alpn`, "invalid_type", "TLS ALPN must be an array of strings."); else output.alpn = tls.alpn; }
@@ -164,8 +164,28 @@ function mapTls(tls, path, add) {
     if (typeof tls.allowInsecure !== "boolean") fatal(add, `${path}.streamSettings.tlsSettings.allowInsecure`, "invalid_type", "TLS allowInsecure must be boolean.");
     else if (tls.allowInsecure) fatal(add, `${path}.streamSettings.tlsSettings.allowInsecure`, "invalid_tls", "Pinned Xray rejects allowInsecure=true.");
   }
-  if (Object.prototype.hasOwnProperty.call(tls, "realitySettings")) fatal(add, `${path}.streamSettings.tlsSettings.realitySettings`, "unsupported_security", "Reality is deferred in this baseline.");
+  if (realitySecurity) mapReality(output, tls, path, add);
+  else if (Object.prototype.hasOwnProperty.call(tls, "realitySettings")) fatal(add, `${path}.streamSettings.tlsSettings.realitySettings`, "unsupported_security", "Reality settings require security=reality.");
   return output;
+}
+function base64UrlBytes(value, expected) {
+  return typeof value === "string" && /^[A-Za-z0-9_-]+$/.test(value) && value.length % 4 !== 1 && Math.floor(value.length * 6 / 8) === expected;
+}
+function mapReality(output, tls, path, add) {
+  const realityPath = `${path}.streamSettings.tlsSettings.realitySettings`;
+  if (!Object.prototype.hasOwnProperty.call(tls, "realitySettings")) { fatal(add, realityPath, "invalid_required_field", "Reality settings are required."); return; }
+  const settings = tls.realitySettings;
+  if (!isContainer(settings)) { fatal(add, realityPath, "invalid_type", "Reality settings must be an object."); return; }
+  unknownKeys(settings, ["publicKey", "shortId"], realityPath, add, true);
+  if (!Object.prototype.hasOwnProperty.call(settings, "publicKey")) fatal(add, `${realityPath}.publicKey`, "invalid_required_field", "Reality public key is required.");
+  else if (!base64UrlBytes(settings.publicKey, 32)) fatal(add, `${realityPath}.publicKey`, "invalid_reality", "Reality public key must be 32-byte unpadded base64url.");
+  else {
+    const reality = output.reality = { enabled: true, public_key: settings.publicKey };
+    if (Object.prototype.hasOwnProperty.call(settings, "shortId")) {
+      if (typeof settings.shortId !== "string" || !/^(?:[0-9a-fA-F]{2}){0,8}$/.test(settings.shortId)) fatal(add, `${realityPath}.shortId`, "invalid_reality", "Reality short ID must be even-length hexadecimal up to 8 bytes.");
+      else if (settings.shortId !== "") reality.short_id = settings.shortId;
+    }
+  }
 }
 function mapFingerprint(fingerprint, path, add) {
   if (typeof fingerprint !== "string") { fatal(add, path, "invalid_type", "TLS fingerprint must be a string."); return undefined; }
@@ -237,7 +257,7 @@ function convert(c, tag, add) {
     }
   }
   const tls = isContainer(st.tlsSettings) ? st.tlsSettings : {}, x = isContainer(st.xhttpSettings) ? st.xhttpSettings : {};
-  t.tls = mapTls(tls, p, add);
+  t.tls = mapTls(tls, p, add, st.security === "reality");
   const tr = t.transport = { type: "xhttp" };
   if (typeof x.path !== "string" || !x.path.startsWith("/")) fatal(add, `${p}.streamSettings.xhttpSettings.path`, "invalid_required_field", "XHTTP path must begin with '/'."); else tr.path = x.path;
   if (!nonempty(x.mode)) fatal(add, `${p}.streamSettings.xhttpSettings.mode`, "invalid_required_field", "XHTTP mode is required.");
@@ -273,6 +293,6 @@ function convert(c, tag, add) {
     const parent = Object.prototype.hasOwnProperty.call(x, k) ? `${p}.streamSettings.xhttpSettings` : Object.prototype.hasOwnProperty.call(st, k) ? `${p}.streamSettings` : Object.prototype.hasOwnProperty.call(o, k) ? p : null;
     if (parent) fatal(add, `${parent}.${k}`, "server_input", "Server-only or unrepresentable field is not accepted.");
   }
-  for (const k of ["certificate", "key", "realitySettings"]) if (Object.prototype.hasOwnProperty.call(tls, k)) fatal(add, `${p}.streamSettings.tlsSettings.${k}`, "server_input", "Server-only TLS field is not accepted.");
+  for (const k of ["certificate", "key"]) if (Object.prototype.hasOwnProperty.call(tls, k)) fatal(add, `${p}.streamSettings.tlsSettings.${k}`, "server_input", "Server-only TLS field is not accepted.");
   return t;
 }

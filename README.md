@@ -188,46 +188,11 @@ watch -n 1 'ss -Htn state established | wc -l' # количество актив
 
 - **Единый inbound:** создаётся только `VLESS-XHTTP-Backend` (`network: "xhttp"`, `security: "none"`, UDS/h2c). Публичный TLS завершает Caddy.
 - **VLESS Encryption по умолчанию:** `setup.sh` после логина вызывает нативный API 3x-ui `GET /panel/api/server/getNewVlessEnc` и сохраняет пару в inbound settings: `settings.decryption` для сервера и `settings.encryption` для подписок и клиентов.
-- **XTLS Vision для клиентов:** начальный клиент получает `flow: "xtls-rprx-vision"`. Этот flow оптимизирует слой VLESS Encryption, а не транспорт XHTTP.
+- **XTLS Vision для клиентов:** начальный клиент получает `flow: "xtls-rprx-vision"`. (оптимизирует слой VLESS Encryption).
 - **Безопасность панели:** Caddy закрывает панель Basic Auth и случайным путём.
 - **Подписки:** глобально включаются endpoints и форматы VLESS, JSON и Clash/Mihomo. У каждого клиента свой UUID и URL подписки по `subId`.
 
-Для распространения конфигурации используется обычная VLESS-подписка 3x-ui.
-
 В VLESS URI параметры `path`, `host` и `mode` передаются отдельно, `xPaddingBytes` дополнительно доступен как `x_padding_bytes`, а полный набор клиентских XHTTP-полей находится в URL-кодированном JSON-параметре `extra`.
-
-### Слои трафика
-
-```text
-VLESS user + flow=xtls-rprx-vision
-        ↓
-VLESS Encryption (settings.encryption/decryption)
-        ↓
-XHTTP transport (mode=stream-up, xmux)
-        ↓
-Caddy TLS / публичная сеть :443
-```
-
-За Caddy TLS termination и XHTTP/UDS не ожидается TCP splice — это нормальная схема для данного проекта.
-
-### Важные предупреждения
-
-> ⚠️ **`mode: "auto"` на клиенте** (`dialer.go:361-369`): `auto` разрешается по наличию REALITY, а не TLS. Без REALITY → `packet-up`. С REALITY без `downloadSettings` → `stream-one`. С REALITY + `downloadSettings` → `stream-up`. Серверный `auto` принимает все три режима. В этом проекте используется явный `stream-up` на сервере, чтобы избежать путаницы.
-
-> ⚠️ **Не включайте `mux.cool` вместе с XHTTP.** При наличии `xmux` в inbound глобальный `subJsonMux` автоматически подавляется в JSON-подписках.
-
-### XMUX: профиль Xray-core v26.6.27
-
-`setup.sh` явно задаёт все шесть полей `xmux`, чтобы подписки не зависели от неявных дефолтов клиента. Профиль соответствует Xray-core v26.6.27 default anti-RKN:
-
-| Поле | Значение | Описание |
-|---|---|---|
-| `maxConcurrency` | `0` | Не включает лимит одновременных запросов на соединение |
-| `maxConnections` | `"6"` | Новое default-значение Xray-core v26.6.27 |
-| `cMaxReuseTimes` | `0` | Не задаёт клиентский лимит переиспользований соединения |
-| `hMaxRequestTimes` | `"600-900"` | Максимум HTTP-запросов на соединение (Nginx default: 1000) |
-| `hMaxReusableSecs` | `"1800-3000"` | Максимальное время жизни соединения (Nginx default: 3600с) |
-| `hKeepAlivePeriod` | `0` | Явное нулевое значение keepalive period |
 
 ## Архитектура
 
@@ -310,7 +275,7 @@ Caddy TLS / публичная сеть :443
 | `uplinkDataKey` | Клиент | packet-up | Uplink Data Key | нет | Имя ключа данных, если placement ≠ body |
 | `uplinkChunkSize` | Клиент | packet-up | Uplink Chunk Size | нет | Размер чанка при размещении в header/cookie |
 | `noGRPCHeader` | Клиент | stream-up, stream-one | No gRPC Header | нет | Подавляет маскировку под gRPC |
-| `xmux` | Клиент | packet-up, stream-up | XMUX (toggle) | да: `maxConcurrency=0`; `maxConnections=6`; `cMaxReuseTimes=0`; `hMaxRequestTimes=600-900`; `hMaxReusableSecs=1800-3000`; `hKeepAlivePeriod=0` | Мультиплексирование H2/H3. Соответствует Xray-core v26.6.27 default anti-RKN |
+| `xmux` | Клиент | packet-up, stream-up | XMUX (toggle) | да: `maxConcurrency=0`; `maxConnections="6"`; `cMaxReuseTimes=0`; `hMaxRequestTimes="600-900"`; `hMaxReusableSecs="1800-3000"`; `hKeepAlivePeriod=0` | Мультиплексирование H2/H3. Профиль Xray-core v26.6.27 default anti-RKN: `maxConcurrency: 0` — не включает лимит одновременных запросов на соединение; `maxConnections: "6"` — лимит соединений XMUX; `cMaxReuseTimes: 0` — не задаёт клиентский лимит переиспользований соединения; `hMaxRequestTimes: "600-900"` — диапазон максимального числа HTTP-запросов на соединение; `hMaxReusableSecs: "1800-3000"` — диапазон максимального времени жизни соединения в секундах; `hKeepAlivePeriod: 0` — явное нулевое значение периода keepalive. |
 | `downloadSettings` | Клиент | stream-up | — (не в UI) | нет | Разделение upstream/downstream |
 | `headers` | Клиент | Все | Headers | частично: `User-Agent=chrome`; остальное — нет | Произвольные заголовки запроса |
 

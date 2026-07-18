@@ -8,6 +8,7 @@ const source = await readFile(new URL("../../docs/converter/converter.js", impor
 const { convertXrayConfig } = await import(`data:text/javascript,${encodeURIComponent(source)}`);
 const id = "00000000-0000-4000-8000-000000000001";
 const encryptionKey = "A".repeat(43);
+const realityPublicKey = "A".repeat(43);
 const base = (extra = {}) => ({
   protocol: "vless",
   tag: "client",
@@ -139,6 +140,49 @@ test("maps nested TLS fingerprint settings and rejects unsupported or conflictin
   const conflict = run([base({ streamSettings: { tlsSettings: { fingerprint: "chrome", settings: { fingerprint: "firefox" } } } })]);
   assert.equal(conflict.value, null);
   assert.ok(conflict.diagnostics.some(d => d.code === "conflicting_fingerprint"));
+});
+
+test("maps Reality with Vision and default uTLS", () => {
+  const r = run([base({ settings: { flow: "xtls-rprx-vision" }, streamSettings: {
+    security: "reality",
+    tlsSettings: { serverName: "synthetic.invalid", fingerprint: "chrome", realitySettings: { publicKey: realityPublicKey, shortId: "0123abcd" } }
+  } })]);
+  assert.equal(r.diagnostics.filter(d => d.severity === "fatal").length, 0);
+  assert.equal(r.value.outbounds[0].flow, "xtls-rprx-vision");
+  assert.deepEqual(r.value.outbounds[0].tls, { enabled: true, server_name: "synthetic.invalid", utls: { enabled: true, fingerprint: "chrome" }, reality: { enabled: true, public_key: realityPublicKey, short_id: "0123abcd" } });
+});
+
+test("rejects malformed Reality keys, short IDs, and missing settings", () => {
+  const reality = (realitySettings) => run([base({ streamSettings: { security: "reality", tlsSettings: { realitySettings } } })]);
+  for (const publicKey of ["A".repeat(42), `${realityPublicKey} `]) {
+    const r = reality({ publicKey });
+    assert.equal(r.value, null);
+    assert.ok(r.diagnostics.some(d => d.code === "invalid_reality"));
+  }
+  for (const shortId of ["123", "0".repeat(18)]) {
+    const r = reality({ publicKey: realityPublicKey, shortId });
+    assert.equal(r.value, null);
+    assert.ok(r.diagnostics.some(d => d.code === "invalid_reality"));
+  }
+  const missing = run([base({ streamSettings: { security: "reality", tlsSettings: {} } })]);
+  assert.equal(missing.value, null);
+  assert.ok(missing.diagnostics.some(d => d.code === "invalid_required_field"));
+  const nonContainer = reality(null);
+  assert.equal(nonContainer.value, null);
+  assert.ok(nonContainer.diagnostics.some(d => d.code === "invalid_type"));
+  const missingPublicKey = reality({});
+  assert.equal(missingPublicKey.value, null);
+  assert.ok(missingPublicKey.diagnostics.some(d => d.code === "invalid_required_field"));
+});
+
+test("rejects unknown and server-only Reality settings without echoing values", () => {
+  for (const key of ["privateKey", "shortIds", "target", "dest", "xver", "show", "spiderX", "mldsa65Verify"]) {
+    const marker = `secret-${key}`;
+    const r = run([base({ streamSettings: { security: "reality", tlsSettings: { realitySettings: { publicKey: realityPublicKey, [key]: marker } } } })]);
+    assert.equal(r.value, null);
+    assert.ok(r.diagnostics.some(d => d.code === "unknown_field"));
+    assert.equal(JSON.stringify(r.diagnostics).includes(marker), false);
+  }
 });
 
 test("rejects flattened settings decryption and mapped type errors", () => {
