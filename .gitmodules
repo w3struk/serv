@@ -2,3 +2,7 @@
 	path = vendor/3x-ui
 	url = https://github.com/w3struk/3x-ui.git
 	branch = main
+[submodule "vendor/sing-box-extended"]
+	path = vendor/sing-box-extended
+	url = https://github.com/shtorm-7/sing-box-extended.git
+	branch = extended
