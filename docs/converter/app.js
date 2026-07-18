@@ -4,6 +4,8 @@ const input = document.getElementById("xray-input");
 const output = document.getElementById("output-json");
 const convertButton = document.getElementById("convert-button");
 const clearButton = document.getElementById("clear-button");
+const fileInput = document.getElementById("xray-file");
+const fileStatus = document.getElementById("file-status");
 const copyButton = document.getElementById("copy-button");
 const downloadButton = document.getElementById("download-button");
 const emptyState = document.getElementById("empty-state");
@@ -64,6 +66,49 @@ function setOutput(value) {
 function showStatus(kind) {
   setHidden(errorState, kind !== "error");
   setHidden(successState, kind !== "success");
+}
+
+function setFileStatus(message, kind = "") {
+  fileStatus.textContent = message;
+  fileStatus.className = `file-status ${kind}`.trim();
+}
+
+function showFileError(message) {
+  setFileStatus(message, "file-status-error");
+  setOutput("");
+  renderDiagnostics([{ severity: "fatal", code: "file_import", path: "$", message }]);
+  showStatus("error");
+  outputMeta.textContent = "Файл не загружен";
+}
+
+function importFile(file) {
+  if (!file) return;
+  const isJson = file.name.toLowerCase().endsWith(".json") || file.type === "application/json";
+  if (!isJson) {
+    showFileError("Выберите JSON-файл с расширением .json.");
+    fileInput.value = "";
+    return;
+  }
+  if (file.size > 1024 * 1024) {
+    showFileError("Файл больше 1 MiB. Выберите меньший JSON-файл.");
+    fileInput.value = "";
+    return;
+  }
+  const reader = new FileReader();
+  reader.addEventListener("load", () => {
+    const text = typeof reader.result === "string" ? reader.result : "";
+    try {
+      JSON.parse(text);
+    } catch (_) {
+      showFileError("Не удалось прочитать файл: в нём некорректный JSON.");
+      return;
+    }
+    input.value = text;
+    setFileStatus(`Загружен файл: ${file.name}`, "file-status-success");
+    convert();
+  });
+  reader.addEventListener("error", () => showFileError("Не удалось прочитать файл. Попробуйте выбрать его ещё раз."));
+  reader.readAsText(file);
 }
 
 function convert() {
@@ -129,6 +174,8 @@ function downloadOutput() {
 
 function clear() {
   input.value = "";
+  fileInput.value = "";
+  setFileStatus("");
   setOutput("");
   outputMeta.textContent = "Ожидает ввода";
   renderInitialDiagnostics();
@@ -139,6 +186,7 @@ function clear() {
 
 convertButton.addEventListener("click", convert);
 clearButton.addEventListener("click", clear);
+fileInput.addEventListener("change", event => importFile(event.target.files[0]));
 copyButton.addEventListener("click", copyOutput);
 downloadButton.addEventListener("click", downloadOutput);
 input.addEventListener("keydown", event => {

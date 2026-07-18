@@ -70,7 +70,6 @@ export function convertXrayConfig(text) {
       add("fatal", "server_input", p, "Server-shaped VLESS input is not accepted.");
     }
     if (Object.prototype.hasOwnProperty.call(s, "decryption")) add("fatal", "server_input", `${p}.settings`, "Server decryption is not accepted.");
-    if (Object.prototype.hasOwnProperty.call(st.xhttpSettings || {}, "xmux")) add("fatal", "unsupported_field", `${p}.streamSettings.xhttpSettings.xmux`, "XHTTP XMUX is deferred in this baseline.");
     candidates.push({ o, s, st, p });
   }
   skipped = ignored;
@@ -145,23 +144,38 @@ function mapTls(tls, path, add) {
   const output = { enabled: true };
   if (nonempty(tls.serverName)) { if (typeof tls.serverName !== "string") fatal(add, `${path}.streamSettings.tlsSettings.serverName`, "invalid_type", "TLS server name must be a string."); else output.server_name = tls.serverName; }
   if (tls.alpn !== undefined) { if (!Array.isArray(tls.alpn) || !tls.alpn.every(value => typeof value === "string")) fatal(add, `${path}.streamSettings.tlsSettings.alpn`, "invalid_type", "TLS ALPN must be an array of strings."); else output.alpn = tls.alpn; }
-  const fingerprint = tls.fingerprint === undefined || tls.fingerprint === "" ? "chrome" : tls.fingerprint;
-  if (typeof fingerprint !== "string") fatal(add, `${path}.streamSettings.tlsSettings.fingerprint`, "invalid_type", "TLS fingerprint must be a string.");
-  else {
-    const canonical = { chrome: "chrome", firefox: "firefox", edge: "edge", safari: "safari", 360: "360", qq: "qq", ios: "ios", android: "android" };
-    const aliases = { hellochrome_auto: "chrome", hellofirefox_auto: "firefox", helloedge_auto: "edge", hellosafari_auto: "safari", hello360_auto: "360", helloqq_auto: "qq", helloios_auto: "ios", helloandroid_11_okhttp: "android" };
-    const normalized = fingerprint.toLowerCase();
-    if (canonical[normalized]) output.utls = { enabled: true, fingerprint: canonical[normalized] };
-    else if (aliases[normalized]) { output.utls = { enabled: true, fingerprint: aliases[normalized] }; add("warning", "normalized_fingerprint", `${path}.streamSettings.tlsSettings.fingerprint`, "A pinned source auto alias was normalized to a canonical target fingerprint."); }
-    else fatal(add, `${path}.streamSettings.tlsSettings.fingerprint`, "unsupported_fingerprint", "TLS fingerprint is not supported by the pinned baseline.");
+  const rootFingerprintPath = `${path}.streamSettings.tlsSettings.fingerprint`;
+  const rootFingerprint = Object.prototype.hasOwnProperty.call(tls, "fingerprint") && tls.fingerprint !== "" ? mapFingerprint(tls.fingerprint, rootFingerprintPath, add) : undefined;
+  let nestedFingerprint;
+  if (Object.prototype.hasOwnProperty.call(tls, "settings")) {
+    const settingsPath = `${path}.streamSettings.tlsSettings.settings`;
+    if (!isContainer(tls.settings)) fatal(add, settingsPath, "invalid_type", "TLS settings must be an object.");
+    else {
+      unknownKeys(tls.settings, ["fingerprint"], settingsPath, add, true);
+      if (Object.prototype.hasOwnProperty.call(tls.settings, "fingerprint")) nestedFingerprint = mapFingerprint(tls.settings.fingerprint, `${settingsPath}.fingerprint`, add);
+    }
   }
+  if (nestedFingerprint !== undefined && rootFingerprint !== undefined && nestedFingerprint !== rootFingerprint) {
+    fatal(add, `${path}.streamSettings.tlsSettings`, "conflicting_fingerprint", "Root and nested TLS fingerprints disagree.");
+  }
+  const fingerprint = nestedFingerprint ?? rootFingerprint ?? "chrome";
+  if (fingerprint !== undefined) output.utls = { enabled: true, fingerprint };
   if (Object.prototype.hasOwnProperty.call(tls, "allowInsecure")) {
     if (typeof tls.allowInsecure !== "boolean") fatal(add, `${path}.streamSettings.tlsSettings.allowInsecure`, "invalid_type", "TLS allowInsecure must be boolean.");
     else if (tls.allowInsecure) fatal(add, `${path}.streamSettings.tlsSettings.allowInsecure`, "invalid_tls", "Pinned Xray rejects allowInsecure=true.");
   }
-  if (Object.prototype.hasOwnProperty.call(tls, "settings")) fatal(add, `${path}.streamSettings.tlsSettings.settings`, "unsupported_field", "TLS settings metadata is not supported.");
   if (Object.prototype.hasOwnProperty.call(tls, "realitySettings")) fatal(add, `${path}.streamSettings.tlsSettings.realitySettings`, "unsupported_security", "Reality is deferred in this baseline.");
   return output;
+}
+function mapFingerprint(fingerprint, path, add) {
+  if (typeof fingerprint !== "string") { fatal(add, path, "invalid_type", "TLS fingerprint must be a string."); return undefined; }
+  const canonical = { chrome: "chrome", firefox: "firefox", edge: "edge", safari: "safari", 360: "360", qq: "qq", ios: "ios", android: "android" };
+  const aliases = { hellochrome_auto: "chrome", hellofirefox_auto: "firefox", helloedge_auto: "edge", hellosafari_auto: "safari", hello360_auto: "360", helloqq_auto: "qq", helloios_auto: "ios", helloandroid_11_okhttp: "android" };
+  const normalized = fingerprint.toLowerCase();
+  if (canonical[normalized]) return canonical[normalized];
+  if (aliases[normalized]) { add("warning", "normalized_fingerprint", path, "A pinned source auto alias was normalized to a canonical target fingerprint."); return aliases[normalized]; }
+  fatal(add, path, "unsupported_fingerprint", "TLS fingerprint is not supported by the pinned baseline.");
+  return undefined;
 }
 function mapHeaders(transport, xhttp, path, add) {
   if (xhttp.headers === undefined) return;
@@ -192,13 +206,35 @@ function mapXmux(transport, xhttp, path, add) {
   if (positiveMapped(output.max_connections) && positiveMapped(output.max_concurrency)) fatal(add, `${path}.streamSettings.xhttpSettings.xmux`, "xmux_conflict", "max_connections and max_concurrency are mutually exclusive.");
   if (Object.keys(output).length) transport.xmux = output;
 }
+function validEncryptionKey(segment) {
+  if (!/^[A-Za-z0-9_-]+$/.test(segment) || segment.length % 4 === 1) return false;
+  return Math.floor(segment.length * 6 / 8) === 32 || Math.floor(segment.length * 6 / 8) === 1184;
+}
+function validEncryption(value) {
+  if (typeof value !== "string") return false;
+  const parts = value.trim().split(".");
+  if (parts.length < 4 || parts[0] !== "mlkem768x25519plus" || !["native", "xorpub", "random"].includes(parts[1]) || !["0rtt", "1rtt"].includes(parts[2])) return false;
+  let keySeen = false;
+  for (const segment of parts.slice(3)) {
+    if (!segment.trim()) return false;
+    if (validEncryptionKey(segment.trim())) keySeen = true;
+    else if (keySeen) return false;
+  }
+  return keySeen;
+}
 function convert(c, tag, add) {
   const { o, s, st, p } = c, t = { type: "vless", tag, server: s.address, server_port: numericValue(s.port, `${p}.settings.port`, "Port", add, true), uuid: typeof s.id === "string" && /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(s.id) ? s.id : undefined };
   if (typeof s.address !== "string" || !s.address.trim() || /[\r\n]/.test(s.address) || t.server_port === undefined || t.server_port > 65535 || !t.uuid) fatal(add, p, "invalid_required_field", "Server, port, and UUID must be valid.");
-  if (nonempty(s.flow)) fatal(add, `${p}.settings.flow`, "unsupported_flow", "Non-empty VLESS flow is deferred in this baseline.");
+  if (nonempty(s.flow)) {
+    if (s.flow === "xtls-rprx-vision") t.flow = s.flow;
+    else fatal(add, `${p}.settings.flow`, "unsupported_flow", "Only xtls-rprx-vision VLESS flow is supported.");
+  }
   if (Object.prototype.hasOwnProperty.call(s, "encryption")) {
     if (typeof s.encryption !== "string") fatal(add, `${p}.settings.encryption`, "invalid_type", "Encryption must be a string.");
-    else if (s.encryption !== "none") fatal(add, `${p}.settings.encryption`, "unsupported_encryption", "VLESS encryption is deferred in this baseline.");
+    else if (s.encryption !== "none" && nonempty(s.encryption)) {
+      if (!validEncryption(s.encryption)) fatal(add, `${p}.settings.encryption`, "unsupported_encryption", "VLESS encryption does not match the pinned baseline format.");
+      else t.encryption = s.encryption;
+    }
   }
   const tls = isContainer(st.tlsSettings) ? st.tlsSettings : {}, x = isContainer(st.xhttpSettings) ? st.xhttpSettings : {};
   t.tls = mapTls(tls, p, add);

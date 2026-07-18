@@ -7,6 +7,7 @@ import { readFile } from "node:fs/promises";
 const source = await readFile(new URL("../../docs/converter/converter.js", import.meta.url), "utf8");
 const { convertXrayConfig } = await import(`data:text/javascript,${encodeURIComponent(source)}`);
 const id = "00000000-0000-4000-8000-000000000001";
+const encryptionKey = "A".repeat(43);
 const base = (extra = {}) => ({
   protocol: "vless",
   tag: "client",
@@ -34,10 +35,23 @@ const base = (extra = {}) => ({
 });
 const run = (outbounds) => convertXrayConfig(JSON.stringify({ outbounds }));
 
-test("converts flattened VLESS Encryption, Vision, TLS and XHTTP", () => {
-  const r = run([base({ settings: { flow: "xtls-rprx-vision", encryption: "mlkem768x25519plus.native" }, xhttp: { host: "synthetic.invalid", headers: { "X-Test": "ok" } } })]);
+test("maps Vision and validated VLESS encryption", () => {
+  const encryption = `mlkem768x25519plus.native.1rtt.padding.${encryptionKey}`;
+  const r = run([base({ settings: { flow: "xtls-rprx-vision", encryption }, xhttp: { host: "synthetic.invalid", headers: { "X-Test": "ok" } } })]);
   assert.equal(r.diagnostics.filter(d => d.severity === "fatal").length, 0);
-  assert.deepEqual(r.value.outbounds[0], { type: "vless", tag: "client", server: "synthetic.invalid", server_port: 443, uuid: id, flow: "xtls-rprx-vision", encryption: "mlkem768x25519plus.native", tls: { enabled: true, server_name: "synthetic.invalid", utls: { enabled: true, fingerprint: "chrome" } }, transport: { type: "xhttp", path: "/unit", mode: "auto", x_padding_bytes: 1, host: "synthetic.invalid", headers: { "X-Test": "ok" } } });
+  assert.equal(r.value.outbounds[0].flow, "xtls-rprx-vision");
+  assert.equal(r.value.outbounds[0].encryption, encryption);
+});
+
+test("rejects unknown flow and invalid VLESS encryption", () => {
+  const unknownFlow = run([base({ settings: { flow: "vision-but-not-exact" } })]);
+  assert.equal(unknownFlow.value, null);
+  assert.ok(unknownFlow.diagnostics.some(d => d.code === "unsupported_flow"));
+  for (const encryption of ["mlkem768x25519plus.native.1rtt", "mlkem768x25519plus.bad.1rtt.x", `mlkem768x25519plus.native.1rtt.${encryptionKey}!`, `other.native.1rtt.${encryptionKey}`]) {
+    const r = run([base({ settings: { encryption } })]);
+    assert.equal(r.value, null);
+    assert.ok(r.diagnostics.some(d => d.code === "unsupported_encryption"));
+  }
 });
 
 test("normalizes ranges and XMUX, and enforces exclusivity", () => {
@@ -61,7 +75,10 @@ test("preserves numeric zero XMUX limits without a conflict", () => {
 });
 
 test("maps advanced client padding fields and does not map allowInsecure", () => {
-  const r = run([base({ xhttp: { xPaddingObfsMode: true, xPaddingKey: "synthetic-key", xPaddingHeader: "X-Pad", xPaddingPlacement: "header", xPaddingMethod: "tokenish" }, streamSettings: { tlsSettings: { allowInsecure: true } } })]);
+  const rejected = run([base({ streamSettings: { tlsSettings: { allowInsecure: true } } })]);
+  assert.equal(rejected.value, null);
+  assert.ok(rejected.diagnostics.some(d => d.code === "invalid_tls"));
+  const r = run([base({ xhttp: { xPaddingObfsMode: true, xPaddingKey: "synthetic-key", xPaddingHeader: "X-Pad", xPaddingPlacement: "header", xPaddingMethod: "tokenish" } })]);
   const t = r.value.outbounds[0];
   assert.equal(t.tls.enabled, true);
   assert.equal(t.tls.insecure, undefined);
@@ -96,17 +113,32 @@ test("requires positive post padding ranges in auto and packet-up modes", () => 
   assert.equal(run([base({ xhttp: { mode: "packet-up", scMaxEachPostBytes: "0-4" } })]).value, null);
 });
 
-test("validates containers, preserves __proto__, and warns on allowInsecure", () => {
+test("validates containers, preserves __proto__, and rejects allowInsecure", () => {
   for (const field of ["tlsSettings", "xhttpSettings"]) {
     const streamSettings = { network: "xhttp", security: "tls", [field]: null };
     assert.equal(run([base({ streamSettings })]).value, null);
   }
   assert.equal(run([base({ xhttp: { xmux: "bad" } })]).value, null);
+  const rejected = run([base({ streamSettings: { tlsSettings: { allowInsecure: true } } })]);
+  assert.equal(rejected.value, null);
+  assert.ok(rejected.diagnostics.some(d => d.code === "invalid_tls"));
   const headers = JSON.parse('{"__proto__":"synthetic"}');
-  const r = run([base({ xhttp: { headers }, streamSettings: { network: "xhttp", security: "tls", tlsSettings: { serverName: "synthetic.invalid", allowInsecure: true }, xhttpSettings: { path: "/unit", mode: "auto", xPaddingBytes: 1, headers } } })]);
+  const r = run([base({ xhttp: { headers } })]);
   assert.equal(r.value.outbounds[0].transport.headers["__proto__"], "synthetic");
   assert.equal(Object.prototype.hasOwnProperty.call(r.value.outbounds[0].transport.headers, "__proto__"), true);
-  assert.ok(r.diagnostics.some(d => d.code === "unsupported_field"));
+  assert.equal(r.diagnostics.filter(d => d.severity === "fatal").length, 0);
+});
+
+test("maps nested TLS fingerprint settings and rejects unsupported or conflicting forms", () => {
+  const nested = run([base({ streamSettings: { tlsSettings: { settings: { fingerprint: "hellofirefox_auto" } } } })]);
+  assert.equal(nested.value.outbounds[0].tls.utls.fingerprint, "firefox");
+  assert.ok(nested.diagnostics.some(d => d.code === "normalized_fingerprint"));
+  const unknown = run([base({ streamSettings: { tlsSettings: { settings: { fingerprint: "chrome", other: true } } } })]);
+  assert.equal(unknown.value, null);
+  assert.ok(unknown.diagnostics.some(d => d.code === "unknown_field" && d.path.endsWith(".settings.*")));
+  const conflict = run([base({ streamSettings: { tlsSettings: { fingerprint: "chrome", settings: { fingerprint: "firefox" } } } })]);
+  assert.equal(conflict.value, null);
+  assert.ok(conflict.diagnostics.some(d => d.code === "conflicting_fingerprint"));
 });
 
 test("rejects flattened settings decryption and mapped type errors", () => {
@@ -142,21 +174,22 @@ test("rejects invalid servers and header injection", () => {
   assert.equal(run([base({ xhttp: { headers: { "X-Bad": "ok\r\nInjected: yes" } } })]).value, null);
 });
 
-test("warns server-only fields and rejects decryption/server shape", () => {
-  const warning = run([base({ xhttp: { scMaxBufferedPosts: 2 } })]);
-  assert.ok(warning.diagnostics.some(d => d.code === "server_only_field"));
-  assert.ok(warning.diagnostics.some(d => d.code === "server_only_field" && d.path.endsWith(".streamSettings.xhttpSettings")));
-  const streamWarning = run([base({ streamSettings: {
+test("rejects server-only fields and server shape", () => {
+  const rejected = run([base({ xhttp: { scMaxBufferedPosts: 2 } })]);
+  assert.equal(rejected.value, null);
+  assert.ok(rejected.diagnostics.some(d => d.code === "server_input" && d.path.endsWith(".streamSettings.xhttpSettings.scMaxBufferedPosts")));
+  const streamRejected = run([base({ streamSettings: {
     network: "xhttp",
     security: "tls",
     tlsSettings: { serverName: "synthetic.invalid" },
     xhttpSettings: { path: "/unit", mode: "auto", xPaddingBytes: 1 },
     serverName: "synthetic.invalid"
   } })]);
-  assert.ok(streamWarning.diagnostics.some(d => d.code === "server_only_field" && d.path.endsWith(".streamSettings")));
-  const rejected = run([{ ...base(), decryption: "none" }]);
-  assert.equal(rejected.value, null);
-  assert.ok(rejected.diagnostics.some(d => d.code === "server_input"));
+  assert.equal(streamRejected.value, null);
+  assert.ok(streamRejected.diagnostics.some(d => d.code === "server_input" && d.path.endsWith(".streamSettings.serverName")));
+  const serverShapeRejected = run([{ ...base(), decryption: "none" }]);
+  assert.equal(serverShapeRejected.value, null);
+  assert.ok(serverShapeRejected.diagnostics.some(d => d.code === "server_input"));
 });
 
 test("allocates deterministic tags and keeps all-or-nothing semantics", () => {

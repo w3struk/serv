@@ -33,6 +33,12 @@
           <div class="field-wrap">
             <label for="xray-input">Конфигурация Xray</label>
             <p class="field-help" id="input-help">Объект с массивом <code>outbounds</code>. До 1&nbsp;MiB.</p>
+            <div class="file-import">
+              <label class="button button-ghost file-picker" for="xray-file"><span aria-hidden="true">↑</span> Загрузить JSON</label>
+              <input class="visually-hidden" id="xray-file" type="file" accept=".json,application/json" aria-describedby="file-help">
+              <p class="file-help" id="file-help">Выберите файл <code>.json</code> — он прочитается только в этом браузере.</p>
+              <p class="file-status" id="file-status" role="status" aria-live="polite"></p>
+            </div>
             <textarea id="xray-input" name="xray-input" spellcheck="false" autocomplete="off" aria-describedby="input-help" placeholder="{
   &quot;outbounds&quot;: [
     {
