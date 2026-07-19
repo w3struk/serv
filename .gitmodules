@@ -1,8 +1,0 @@
-[submodule "external/3x-ui"]
-	path = external/3x-ui
-	url = https://github.com/w3struk/3x-ui.git
-	branch = main
-[submodule "external/sing-box-extended"]
-	path = external/sing-box-extended
-	url = https://github.com/shtorm-7/sing-box-extended.git
-	branch = extended
