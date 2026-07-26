@@ -1,0 +1,3 @@
+[submodule "3x-ui"]
+	path = 3x-ui
+	url = https://github.com/MHSanaei/3x-ui.git
