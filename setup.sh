@@ -364,7 +364,8 @@ build_host_payload() {
             isDisabled: false,
             port: 443,
             security: "tls",
-            sni: $domain,
+            overrideSniFromAddress: true,
+            keepSniBlank: false,
             path: "",
             alpn: ["h2", "http/1.1"],
             fingerprint: "chrome"
@@ -956,7 +957,7 @@ if ! echo "$HOST_ADD_RESP" | jq -e \
     and (.obj[0].address == $domain)
     and (.obj[0].port == 443)
     and (.obj[0].security == "tls")
-    and (.obj[0].sni == $domain)
+    and (.obj[0].overrideSniFromAddress == true)
     and (.obj[0].fingerprint == "chrome")
     and (((.obj[0].alpn // []) | index("h2")) != null)
     and (((.obj[0].alpn // []) | index("http/1.1")) != null)
@@ -986,7 +987,7 @@ if ! echo "$HOST_READBACK_RESP" | jq -e \
             and (.isDisabled == false)
             and (.port == 443)
             and (.security == "tls")
-            and (.sni == $domain)
+            and (.overrideSniFromAddress == true)
             and (.fingerprint == "chrome")
             and ((.alpn // []) | index("h2") != null)
             and ((.alpn // []) | index("http/1.1") != null)
