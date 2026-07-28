@@ -304,7 +304,7 @@ build_xhttp_payload() {
                 enableXmux: true,
                 xmux: {
                     maxConcurrency: "",
-                    maxConnections: "6",
+                    maxConnections: "3",
                     cMaxReuseTimes: 0,
                     hMaxRequestTimes: "600-900",
                     hMaxReusableSecs: "1800-3000",
