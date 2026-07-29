@@ -14,6 +14,10 @@ http://:80 {
 $DOMAIN {
     encode gzip zstd
 
+    handle /$ADMIN_PATH/panel/api/* {
+        reverse_proxy 127.0.0.1:2053
+    }
+
     handle /$ADMIN_PATH/* {
         basic_auth {
             admin $WEB_PASSWORD_HASH
