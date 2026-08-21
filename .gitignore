@@ -1,0 +1,5 @@
+# Caddy runtime data (TLS certificates / private keys). Only the tracked
+# fallback site under caddy/data/www is intentionally committed.
+caddy/data/*
+!caddy/data/www/
+!caddy/data/www/index.html

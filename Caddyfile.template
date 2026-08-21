@@ -54,9 +54,8 @@ $DOMAIN {
     }
 
     handle {
-        reverse_proxy https://mirrors.edge.kernel.org {
-            header_up Host mirrors.edge.kernel.org
-        }
+        root * /data/www
+        file_server
     }
 
     header {
