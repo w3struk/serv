@@ -3,3 +3,7 @@
 caddy/data/*
 !caddy/data/www/
 !caddy/data/www/index.html
+
+# Lampac runtime data (config with secrets, database) — server-side only.
+# Anchored to repo root so it does NOT match the external/lampac submodule.
+/lampac/
