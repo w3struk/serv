@@ -53,9 +53,12 @@ $DOMAIN {
         }
     }
 
+    handle /adminpanel/* {
+        respond 403
+    }
+
     handle {
-        root * /data/www
-        file_server
+        reverse_proxy 127.0.0.1:9118
     }
 
     header {

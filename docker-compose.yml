@@ -19,3 +19,27 @@ services:
             XRAY_VMESS_AEAD_FORCED: "false"
             XUI_ENABLE_FAIL2BAN: "true"
         tty: true
+
+    # Lampac media service (Lampa backend) — catch-all domain route via Caddy.
+    # Built from the external/lampac fork submodule (github.com/w3struk/lampac)
+    # at the pinned commit; the Telegram auth gate is config-driven via
+    # LampaWeb.telegramAuthGate in init.conf (no vendored deny.js needed).
+    # Container runs as uid/gid 1000; host paths under ./lampac must be owned 1000:1000.
+    lampac:
+        build:
+            context: ./external/lampac
+            dockerfile: Dockerfile
+        image: lampac-fork:7307e6c
+        container_name: lampac
+        restart: unless-stopped
+        network_mode: host
+        shm_size: 1024mb
+        security_opt:
+            - no-new-privileges:true
+        volumes:
+            - ./lampac/config/init.conf:/lampac/init.conf
+            - ./lampac/config/passwd:/lampac/passwd
+            - ./lampac/config/users.json:/lampac/users.json
+            - ./lampac/database:/lampac/database
+            - ./lampac/cache:/lampac/cache
+            - ./lampac/mods:/lampac/mods

@@ -4,6 +4,14 @@ caddy/data/*
 !caddy/data/www/
 !caddy/data/www/index.html
 
-# Lampac runtime data (config with secrets, database) — server-side only.
+# Lampac runtime data (config with secrets, database, cache, mods) — server-side only.
 # Anchored to repo root so it does NOT match the external/lampac submodule.
-/lampac/
+# The Telegram gate is config-driven (LampaWeb.telegramAuthGate in init.conf);
+# only runtime dirs are ignored.
+/lampac/config/
+/lampac/database/
+/lampac/cache/
+/lampac/mods/
+
+# Deepwork local progress state (not part of the deployable repo).
+.slim/deepwork/

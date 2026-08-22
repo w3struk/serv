@@ -747,6 +747,22 @@ echo ""
 XUI_PASS=${XUI_PASS:-admin}
 echo -e "${Y}-------------------------------${N}"
 echo ""
+echo -e "${Y}--- Lampac (Lampa media) Telegram gate ---${N}"
+read -p "Lampac Telegram bot token (from @BotFather): " LAMPAC_BOT_TOKEN
+read -p "Lampac Telegram bot username (e.g. relampac_bot) [relampac_bot]: " LAMPAC_BOT_USERNAME
+LAMPAC_BOT_USERNAME=${LAMPAC_BOT_USERNAME:-relampac_bot}
+read -p "Owner Telegram ID (numeric, optional): " LAMPAC_OWNER_ID
+if [ -n "$LAMPAC_OWNER_ID" ]; then
+    [[ "$LAMPAC_OWNER_ID" =~ ^[0-9]+$ ]] || { echo -e "${R}[ERROR]${N} Owner Telegram ID must be numeric"; exit 1; }
+    OWNER_JSON="[$LAMPAC_OWNER_ID]"
+else
+    OWNER_JSON="[]"
+fi
+[[ "$LAMPAC_BOT_TOKEN" =~ ^[0-9]+:[A-Za-z0-9_-]{30,}$ ]] || { echo -e "${R}[ERROR]${N} Invalid bot token (expected <id>:<secret>)"; exit 1; }
+[[ "$LAMPAC_BOT_USERNAME" =~ ^[A-Za-z0-9_]{4,64}$ ]] || { echo -e "${R}[ERROR]${N} Invalid bot username"; exit 1; }
+LAMPAC_SERVICE_NAME="Lampac"
+echo -e "${Y}---------------------------------------------${N}"
+echo ""
 
 echo -e "${Y}--- Client Configuration ---${N}"
 
@@ -783,12 +799,12 @@ echo -e "${Y}VLESS Encryption:${N} enabled by default"
 echo -e "${Y}XTLS flow:${N}   $VLESS_FLOW"
 echo ""
 
-echo -e "${G}[1/8]${N} Preparing directories..."
+echo -e "${G}[1/9]${N} Preparing directories..."
 mkdir -p "$SERVER_DIR/3x-ui/db"
 mkdir -p "$SERVER_DIR/caddy/data"
 echo -e "  ${G}Done${N}"
 
-echo -e "${G}[2/8]${N} Enabling BBR..."
+echo -e "${G}[2/9]${N} Enabling BBR..."
 if ! grep -q "net.core.default_qdisc=fq" /etc/sysctl.conf; then
     echo "net.core.default_qdisc=fq" | tee -a /etc/sysctl.conf
     echo "net.ipv4.tcp_congestion_control=bbr" | tee -a /etc/sysctl.conf
@@ -796,7 +812,7 @@ if ! grep -q "net.core.default_qdisc=fq" /etc/sysctl.conf; then
 fi
 echo -e "  ${G}BBR enabled${N}"
 
-echo -e "${G}[3/8]${N} Generating Caddyfile from template..."
+echo -e "${G}[3/9]${N} Generating Caddyfile from template..."
 if [ ! -f "$SERVER_DIR/Caddyfile.template" ]; then
     echo -e "${R}[ERROR]${N} Caddyfile.template not found"
     exit 1
@@ -810,7 +826,7 @@ sed -i "s|\$CLASH_PATH|$CLASH_PATH|g" "$SERVER_DIR/Caddyfile"
 sed -i "s|\$XHTTP_PATH|$XHTTP_PATH|g" "$SERVER_DIR/Caddyfile"
 echo -e "  ${G}Domain and paths updated${N}"
 
-echo -e "${G}[4/8]${N} Generating Caddy bcrypt hash..."
+echo -e "${G}[4/9]${N} Generating Caddy bcrypt hash..."
 read -s -p "Enter password for web basic_auth: " WEB_PASSWORD
 echo ""
 if ! command -v docker &> /dev/null; then
@@ -824,7 +840,7 @@ BCRYPT_HASH=$(docker run --rm -i caddy caddy hash-password <<< "$WEB_PASSWORD" 2
 sed -i "s|\$WEB_PASSWORD_HASH|$BCRYPT_HASH|g" "$SERVER_DIR/Caddyfile"
 echo -e "  ${G}Caddy bcrypt hash updated${N}"
 
-echo -e "${G}[5/8]${N} Configuring firewall..."
+echo -e "${G}[5/9]${N} Configuring firewall..."
 # On RHEL-family, firewalld and iptables-services conflict at runtime and
 # stopping firewalld wipes live rules — so disable it BEFORE applying ours.
 if { command -v dnf >/dev/null 2>&1 || command -v yum >/dev/null 2>&1; } && command -v systemctl >/dev/null 2>&1; then
@@ -869,11 +885,56 @@ fi
 persist_firewall
 echo -e "  ${G}Firewall configured${N}"
 
-echo -e "${G}[6/8]${N} Starting services..."
-cd "$SERVER_DIR" && docker compose down && docker compose up -d
+echo -e "${G}[6/9]${N} Configuring Lampac media service (Telegram gate)..."
+LAMPAC_CONF_DIR="$SERVER_DIR/lampac/config"
+mkdir -p "$SERVER_DIR/lampac"/{config,database,cache,mods}
+
+GENERATE_LAMPAC=true
+if [ -f "$LAMPAC_CONF_DIR/init.conf" ]; then
+    read -p "Lampac config already exists. Recreate? [y/N]: " RECREATE
+    if [[ "$RECREATE" =~ ^[Yy]$ ]]; then GENERATE_LAMPAC=true; else GENERATE_LAMPAC=false; fi
+fi
+
+if [ "$GENERATE_LAMPAC" = true ]; then
+    MUTATIONS_SECRET=$(head -c 32 /dev/urandom | md5sum | head -c 32)
+    LAMPAC_PASSWD=$(head -c 32 /dev/urandom | md5sum | head -c 32)
+
+    jq -n \
+      --arg bot_token "$LAMPAC_BOT_TOKEN" \
+      --arg bot_username "$LAMPAC_BOT_USERNAME" \
+      --arg mutations "$MUTATIONS_SECRET" \
+      --argjson owner "$OWNER_JSON" \
+      '{
+        listen: {ip:"127.0.0.1", port:9118},
+        BaseModule: {SkipModules: ["Catalog","Tracks","Transcoding","WebLog","CacheMedia","ForkPlayerXML","MsxNative","Potok","TorrServer"]},
+        accsdb: {enable: true},
+        TelegramAuth: {enable:true, mutations_api_secret:$mutations, owner_telegram_ids:$owner, auto_provision_users:false, auto_provision_role:"user", accsdb_sync_group_admin:100},
+        TelegramAuthBot: {enable:true, bot_token:$bot_token, lampac_base_url:"http://127.0.0.1:9118", mutations_api_secret:$mutations, service_display_name:"Lampac NextGen Bot", owner_telegram_ids:[]},
+        LampaWeb: {telegramAuthGate: {enabled: true, botUsername: $bot_username, serviceName: "Lampac"}},
+        KnownProxies: [{ip:"127.0.0.1",prefixLength:8}]
+      }' > "$LAMPAC_CONF_DIR/init.conf"
+    echo -e "  ${G}init.conf written${N}"
+
+    echo "$LAMPAC_PASSWD" > "$LAMPAC_CONF_DIR/passwd"
+    printf '[]' > "$LAMPAC_CONF_DIR/users.json"
+    echo -e "  ${G}passwd + users.json written${N}"
+else
+    echo -e "  ${Y}Keeping existing Lampac config${N}"
+fi
+
+chown -R 1000:1000 "$SERVER_DIR/lampac"
+[ -f "$LAMPAC_CONF_DIR/init.conf" ] && chmod 600 "$LAMPAC_CONF_DIR/init.conf"
+[ -f "$LAMPAC_CONF_DIR/passwd" ] && chmod 600 "$LAMPAC_CONF_DIR/passwd"
+echo -e "  ${G}permissions set (uid 1000, secrets 600)${N}"
+
+echo -e "${G}[7/9]${N} Starting services..."
+# Ensure the lampac fork submodule is present so `docker compose build` can
+# use ./external/lampac as the build context.
+git -C "$SERVER_DIR" submodule update --init external/lampac 2>/dev/null || git -C "$SERVER_DIR" submodule update --init --recursive 2>/dev/null || true
+cd "$SERVER_DIR" && docker compose down && docker compose up -d --build
 echo -e "  ${G}Services started${N}"
 
-echo -e "${G}[7/8]${N} Configuring 3x-ui inbound, Host, and client via API..."
+echo -e "${G}[8/9]${N} Configuring 3x-ui inbound, Host, and client via API..."
 echo "  Waiting for 3x-ui to be ready (max 60s)..."
 MAX_RETRIES=30
 RETRY_COUNT=0
@@ -1043,7 +1104,8 @@ UPDATED_SETTINGS=$(echo "$ALL_SETTINGS_RESP" | jq -c \
      | .subJsonMux = $sub_json_mux
      | .subClashEnable = true
      | .subClashPath = $clash_path
-     | .subClashURI = $sub_clash_uri')
+     | .subClashURI = $sub_clash_uri
+     | .webListen = "127.0.0.1"')
 SETTINGS_RESP=$(xui_json "http://127.0.0.1:2053/panel/api/setting/update" "$UPDATED_SETTINGS")
 if echo "$SETTINGS_RESP" | jq_success; then
     echo -e "  ${G}Panel and subscription configured${N}"
@@ -1087,6 +1149,6 @@ sleep 3
 rm "$COOKIE_FILE"
 echo -e "  ${G}Inbound, Host, and subscription configured via API${N}"
 
-echo -e "${G}[8/8] Done.${N}"
+echo -e "${G}[9/9] Done.${N}"
 
 print_summary
