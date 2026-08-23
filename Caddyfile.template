@@ -53,8 +53,11 @@ $DOMAIN {
         }
     }
 
-    handle /adminpanel /adminpanel/* {
-        respond 403
+    handle /adminpanel* {
+        basic_auth {
+            admin $WEB_PASSWORD_HASH
+        }
+        reverse_proxy 127.0.0.1:9118
     }
 
     handle {
