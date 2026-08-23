@@ -909,9 +909,22 @@ if [ "$GENERATE_LAMPAC" = true ]; then
         listen: {ip:"127.0.0.1", port:9118},
         BaseModule: {SkipModules: ["Catalog","Tracks","Transcoding","WebLog","CacheMedia","ForkPlayerXML","MsxNative","Potok","TorrServer"]},
         accsdb: {enable: true},
-        TelegramAuth: {enable:true, mutations_api_secret:$mutations, owner_telegram_ids:$owner, auto_provision_users:false, auto_provision_role:"user", accsdb_sync_group_admin:100},
-        TelegramAuthBot: {enable:true, bot_token:$bot_token, lampac_base_url:"http://127.0.0.1:9118", mutations_api_secret:$mutations, service_display_name:"Lampac NextGen Bot", owner_telegram_ids:$owner},
-        LampaWeb: {telegramAuthGate: {enabled: true, botUsername: $bot_username, serviceName: $service_name}},
+        TelegramAuth: {
+          enable: true,
+          data_dir: "database/tgauth",
+          mutations_api_secret: $mutations,
+          owner_telegram_ids: $owner,
+          auto_provision_users: false,
+          auto_provision_role: "user",
+          accsdb_sync_group_admin: 100,
+          bot: {
+            enable: true,
+            token: $bot_token,
+            username: $bot_username,
+            display_name: $service_name,
+            owner_telegram_ids: $owner
+          }
+        },
         KnownProxies: [{ip:"127.0.0.1",prefixLength:8}]
       }' > "$LAMPAC_CONF_DIR/init.conf"
     echo -e "  ${G}init.conf written${N}"
