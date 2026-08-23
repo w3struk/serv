@@ -748,7 +748,7 @@ XUI_PASS=${XUI_PASS:-admin}
 echo -e "${Y}-------------------------------${N}"
 echo ""
 echo -e "${Y}--- Lampac (Lampa media) Telegram gate ---${N}"
-read -p "Lampac Telegram bot token (from @BotFather): " LAMPAC_BOT_TOKEN
+read -s -p "Lampac Telegram bot token (from @BotFather): " LAMPAC_BOT_TOKEN; echo
 read -p "Lampac Telegram bot username (e.g. relampac_bot) [relampac_bot]: " LAMPAC_BOT_USERNAME
 LAMPAC_BOT_USERNAME=${LAMPAC_BOT_USERNAME:-relampac_bot}
 read -p "Owner Telegram ID (numeric, optional): " LAMPAC_OWNER_ID
@@ -902,6 +902,7 @@ if [ "$GENERATE_LAMPAC" = true ]; then
     jq -n \
       --arg bot_token "$LAMPAC_BOT_TOKEN" \
       --arg bot_username "$LAMPAC_BOT_USERNAME" \
+      --arg service_name "$LAMPAC_SERVICE_NAME" \
       --arg mutations "$MUTATIONS_SECRET" \
       --argjson owner "$OWNER_JSON" \
       '{
@@ -909,8 +910,8 @@ if [ "$GENERATE_LAMPAC" = true ]; then
         BaseModule: {SkipModules: ["Catalog","Tracks","Transcoding","WebLog","CacheMedia","ForkPlayerXML","MsxNative","Potok","TorrServer"]},
         accsdb: {enable: true},
         TelegramAuth: {enable:true, mutations_api_secret:$mutations, owner_telegram_ids:$owner, auto_provision_users:false, auto_provision_role:"user", accsdb_sync_group_admin:100},
-        TelegramAuthBot: {enable:true, bot_token:$bot_token, lampac_base_url:"http://127.0.0.1:9118", mutations_api_secret:$mutations, service_display_name:"Lampac NextGen Bot", owner_telegram_ids:[]},
-        LampaWeb: {telegramAuthGate: {enabled: true, botUsername: $bot_username, serviceName: "Lampac"}},
+        TelegramAuthBot: {enable:true, bot_token:$bot_token, lampac_base_url:"http://127.0.0.1:9118", mutations_api_secret:$mutations, service_display_name:"Lampac NextGen Bot", owner_telegram_ids:$owner},
+        LampaWeb: {telegramAuthGate: {enabled: true, botUsername: $bot_username, serviceName: $service_name}},
         KnownProxies: [{ip:"127.0.0.1",prefixLength:8}]
       }' > "$LAMPAC_CONF_DIR/init.conf"
     echo -e "  ${G}init.conf written${N}"
