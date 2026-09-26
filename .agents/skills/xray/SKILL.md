@@ -28,7 +28,7 @@ description: Развертывать, обновлять и администр�
 - Сверить установленный и целевой теги с официальными [Xray-core Releases](https://github.com/XTLS/Xray-core/releases). Отличать `Latest` stable от `Pre-release`; не считать самый новый тег автоматически подходящим для production.
 - В production фиксировать точный тег или image digest и сохранять проверенный rollback artifact. Не переключать развертывание на изменяемые `latest` или `pre-release` без прямого решения пользователя.
 - Читать [матрицу совместимости версий](references/version-compatibility.md), если задача касается обновления, REALITY, XHTTP `extra`/XMUX/padding/session placement, TLS pinning, legacy ciphers или старых клиентов.
-- Считать матрицу датированным снимком. При запросе о последних изменениях повторно проверять upstream release, относящиеся PR/commits и диапазон изменений от установленного тега до целевого.
+- Считать матрицу датированным снимком (обновлена 2026-09-26, покрытие до v26.9.9). При запросе о последних изменениях повторно проверять upstream release, относящиеся PR/commits и диапазон изменений от установленного тега до целевого.
 - Сравнивать совместимость сервера со всеми реальными клиентами и панелями, затем сначала проверять обновление на одном клиенте или тестовом inbound.
 
 ## Источники upstream
@@ -79,7 +79,7 @@ description: Развертывать, обновлять и администр�
 - Выбирать реалистичный `serverNames`/SNI target и проверять его доступность. При использовании собственного домена осознанно настраивать fallback/website и сохранять строгую проверку сертификата.
 - Использовать short IDs с достаточной энтропией и не публиковать их.
 - Использовать поддерживаемые клиентом `fingerprint`/uTLS settings; не компенсировать несовместимость отключением проверки.
-- Перед обновлением сервера проверять default `minClientVer` целевой версии и версии всех клиентов. Не понижать `minClientVer` молча ради совместимости.
+- Перед обновлением сервера проверять `minClientVer` целевой версии и версии всех клиентов; учитывать, что в v26.9.x встроенный default снят (пустое значение = без минимума), а REALITY handshake требует от клиентов X25519MLKEM768. Не понижать `minClientVer` молча ради совместимости.
 
 Полезные команды:
 
@@ -273,6 +273,7 @@ journalctl -u xray --no-pager -n 100
 - TLS handshake failure: проверить SNI, certificate, ALPN, reverse proxy mode и client fingerprint settings.
 - Certificate/import warnings: исправить certificate chain, SNI, client fingerprint или HTTPS panel setup; не включать insecure verification.
 - Reality failure: проверить public/private key pair, `serverNames`, `shortIds`, client `pbk`, `sid`, `sni`, time synchronization и `minClientVer` относительно версии клиента.
+- REALITY handshake перестал проходить после обновления core: проверить поддержку X25519MLKEM768 в клиентах и фактический `minClientVer` (в v26.9.x встроенный default снят).
 - Config test отклоняет outbound после обновления: проверить незашифрованные public VLESS/Trojan outbounds и удаленные VMess/Shadowsocks ciphers.
 - Private LAN target блокируется с `proxy/freedom: blocked target`: добавить узкий `finalRules` allow outbound и отдельное routing rule только для нужной цели.
 - `X-Forwarded-For` игнорируется как forged: проверить `sockopt.trustedXForwardedFor` и фактический source address reverse proxy.
