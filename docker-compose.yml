@@ -1,6 +1,7 @@
 services:
     caddy:
-        image: caddy:latest
+        # pinned 2026-09-22: caddy 2.11.4 (latest stable 2.x), digest from Docker Hub library/caddy.
+        image: caddy:2.11.4@sha256:040e9f7480b80b6d4a7e5013a21159b950a63dcbdb956e38abe2387fb28d9ec0
         container_name: caddy
         restart: always
         network_mode: host
@@ -9,7 +10,8 @@ services:
             - ./Caddyfile:/etc/caddy/Caddyfile
 
     3xui:
-        image: ghcr.io/mhsanaei/3x-ui:latest
+        # pinned 2026-09-22: 3x-ui v3.8.5 (matches external/3x-ui submodule), digest from ghcr API.
+        image: ghcr.io/mhsanaei/3x-ui:v3.8.5@sha256:e0f90c10902e0e74f947d5a9efe017b273804477430233bbfc4918542ffe366c
         container_name: 3xui_app
         restart: unless-stopped
         network_mode: host

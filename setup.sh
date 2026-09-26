@@ -46,6 +46,8 @@ fi
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd -P)"
 SERVER_DIR="$SCRIPT_DIR"
+XUI_DB_DIR="$SERVER_DIR/3x-ui/db"
+XUI_DB_PATH="$XUI_DB_DIR/x-ui.db"
 
 # Colors
 R="\033[0;31m"
@@ -54,6 +56,22 @@ Y="\033[0;33m"
 C="\033[0;36m"
 B="\033[1m"
 N="\033[0m"
+
+# Read a single settings value from the x-ui SQLite DB, with a fallback.
+xui_db_value() {
+    local key="$1" fallback="$2" out
+    if [ ! -f "$XUI_DB_PATH" ]; then
+        printf '%s' "$fallback"
+        return 0
+    fi
+    if out=$(sqlite3 "$XUI_DB_PATH" "SELECT value FROM settings WHERE key='$key' LIMIT 1;" 2>&1); then
+        if [ -n "$out" ]; then printf '%s' "$out"; else printf '%s' "$fallback"; fi
+        return 0
+    fi
+    echo -e "${Y}[WARN]${N} Cannot read x-ui DB ($XUI_DB_PATH): $out" >&2
+    echo -e "       Run as root; upstream stores it owner-only (0700 dir / 0600 files)." >&2
+    printf '%s' "$fallback"
+}
 
 API_PREFIX=""
 VLESS_FLOW="xtls-rprx-vision"
@@ -582,8 +600,8 @@ add_client() {
     echo -e "${G}║     ${B}Client Added${N}${G}                  ║${N}"
     echo -e "${G}╚══════════════════════════════════════╝${N}"
     echo ""
-    SUB_PATH=$(sqlite3 /opt/serv/3x-ui/db/x-ui.db "SELECT value FROM settings WHERE key='subPath' LIMIT 1;" 2>/dev/null || echo "/sub/")
-    CLASH_PATH=$(sqlite3 /opt/serv/3x-ui/db/x-ui.db "SELECT value FROM settings WHERE key='subClashPath' LIMIT 1;" 2>/dev/null || echo "/clash/")
+    SUB_PATH=$(xui_db_value subPath "/sub/")
+    CLASH_PATH=$(xui_db_value subClashPath "/clash/")
     echo -e "${B}XHTTP Subscription links:${N}"
     echo -e "  ${C}VLESS:${N} https://${C}${DOMAIN}${N}${SUB_PATH}${SID}  (${EMAIL})"
     echo -e "  ${C}Clash:${N} https://${C}${DOMAIN}${N}${CLASH_PATH}${SID}  (${EMAIL})"
@@ -667,16 +685,18 @@ def settings_obj:
     fi
 
     echo ""
-    sqlite3 /opt/serv/3x-ui/db/x-ui.db 2>/dev/null <<<".exit" && {
+    if sqlite3 "$XUI_DB_PATH" <<<".exit" 2>/dev/null; then
         echo -e "${B}Settings:${N}"
         local subPath subURI webBase
-        subPath=$(sqlite3 /opt/serv/3x-ui/db/x-ui.db "SELECT value FROM settings WHERE key='subPath' LIMIT 1;" 2>/dev/null || echo "—")
-        subURI=$(sqlite3 /opt/serv/3x-ui/db/x-ui.db "SELECT value FROM settings WHERE key='subURI' LIMIT 1;" 2>/dev/null || echo "—")
-        webBase=$(sqlite3 /opt/serv/3x-ui/db/x-ui.db "SELECT value FROM settings WHERE key='webBasePath' LIMIT 1;" 2>/dev/null || echo "—")
+        subPath=$(xui_db_value subPath "—")
+        subURI=$(xui_db_value subURI "—")
+        webBase=$(xui_db_value webBasePath "—")
         echo -e "  ${Y}Sub Path:${N}     $subPath"
         echo -e "  ${Y}Sub URI:${N}      $subURI"
         echo -e "  ${Y}Web Base Path:${N} $webBase"
-    } 2>/dev/null || true
+    else
+        echo -e "  ${Y}Settings:${N}      DB not readable: $XUI_DB_PATH (check permissions / root)"
+    fi
     echo ""
 }
 
@@ -801,6 +821,11 @@ echo ""
 
 echo -e "${G}[1/9]${N} Preparing directories..."
 mkdir -p "$SERVER_DIR/3x-ui/db"
+# Mirror upstream 3x-ui v3.8.5 owner-only storage: 0700 dir / 0600 files
+chmod 700 "$SERVER_DIR/3x-ui/db"
+for f in "$XUI_DB_DIR/x-ui.db" "$XUI_DB_DIR/x-ui.db-wal" "$XUI_DB_DIR/x-ui.db-shm"; do
+    if [ -e "$f" ]; then chmod 600 "$f"; fi
+done
 mkdir -p "$SERVER_DIR/caddy/data"
 echo -e "  ${G}Done${N}"
 
@@ -1150,7 +1175,9 @@ fi
 
 # 6. Restart panel to apply settings
 echo "  Checkpointing DB WAL..."
-sqlite3 /opt/serv/3x-ui/db/x-ui.db "PRAGMA wal_checkpoint;" 2>/dev/null || true
+if [ -f "$XUI_DB_PATH" ]; then
+    sqlite3 "$XUI_DB_PATH" "PRAGMA wal_checkpoint;" 2>/dev/null || echo -e "  ${Y}Warning:${N} WAL checkpoint failed — DB not readable ($XUI_DB_PATH)"
+fi
 echo "  Restarting panel..."
 CSRF=$(csrf_token)
 curl -s --max-time 10 -b "$COOKIE_FILE" -c "$COOKIE_FILE" -X POST "http://127.0.0.1:2053/panel/api/setting/restartPanel" \
