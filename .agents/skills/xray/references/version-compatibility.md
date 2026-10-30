@@ -1,14 +1,18 @@
 # Совместимость версий Xray-core
 
-Использовать этот файл только для version-specific задач. При запросе о последних версиях заново проверить [официальные релизы](https://github.com/XTLS/Xray-core/releases) и исходный код: приведенные ниже статусы и defaults являются снимком на 2026-09-26, покрытым до `v26.9.9`.
+Использовать этот файл только для version-specific задач. При запросе о последних версиях заново проверить [официальные релизы](https://github.com/XTLS/Xray-core/releases) и исходный код: приведенные ниже статусы и defaults являются снимком на 2026-10-25, покрытым до `v26.10.21`. Теги `v26.10.10` и `v26.10.17` сняты upstream.
 
-## Каналы релизов на 2026-09-26
+## Каналы релизов на 2026-10-25
 
-- `v26.3.27` (2026-03-27) — тег, отмеченный GitHub как `Latest` stable.
+- `v26.3.27` (2026-03-27) — был отмечен GitHub как `Latest` stable до 2026-10-21; сейчас GitHub `Latest` — `v26.10.21`.
 - `v26.7.28` (2026-07-28) — pre-release после `v26.7.11`.
-- `v26.9.8` и `v26.9.9` (2026-09-08) — свежая pre-release цепочка; `v26.9.9` — новейший тег.
-- Тегов `v26.8.x` не существует: после `v26.7.28` нумерация переходит сразу к `v26.9.8`.
-- Все релизы после `v26.3.27` помечены GitHub как `Pre-release`, при этом панели (например, 3x-ui v3.8.x) бандлят `v26.9.9` как рабочий core. Учитывать это при оценке риска, не отменяя правило ниже.
+- `v26.9.8` (2026-09-08) — pre-release, **удалён upstream** (404); `v26.9.9` (2026-09-08) — pre-release.
+- `v26.9.30` (2026-09-30) — pre-release; последний тег перед 26.10.x.
+- `v26.10.10` (2026-10-10) — **снят upstream 2026-10-21**, ассеты 404; именно это ядро бандлит 3x-ui v3.10.2.
+- `v26.10.17` (2026-10-17) — **снят upstream**, ассеты 404.
+- `v26.10.21` (2026-10-21) — назначен `latest`; interim security release, полные notes обещаны позже.
+- Тегов `v26.8.x` нет; промежуточных тегов между `v26.9.30` и `v26.10.21` не осталось (`v26.10.17` снят).
+- 3x-ui: v3.10.2 пинится на `v26.10.10`; main уже переведён на `v26.10.21` ([commit `61b129d5`](https://github.com/MHSanaei/3x-ui/commit/61b129d5)), релиза с ним пока нет. Пересборка образа v3.10.2 из исходников сегодня невозможна (URL ядра 404) — использовать только опубликованный образ.
 
 Не обновлять production до нового pre-release автоматически. Сначала определить текущую версию сервера и клиентов, прочитать полный диапазон изменений, зафиксировать точный tag/image digest и сохранить rollback artifact.
 
@@ -66,17 +70,41 @@
 - freedom/`dialerProxy`: домен больше не резолвится и `finalRules` не применяются (freedom не является финальным outbound). Источник: [PR #6742](https://github.com/XTLS/Xray-core/pull/6742).
 - Прочее по диапазону: `localOS` в routing ([PR #6553](https://github.com/XTLS/Xray-core/pull/6553)), WireGuard `remoteDNS` и TTL ([PR #6620](https://github.com/XTLS/Xray-core/pull/6620)), Blackhole response data ([PR #6713](https://github.com/XTLS/Xray-core/pull/6713)), QUICv2 в sniffing ([PR #6695](https://github.com/XTLS/Xray-core/pull/6695)), Hysteria 2.12.2 ([PR #6565](https://github.com/XTLS/Xray-core/pull/6565)), toolchain Go 1.27.x ([commit `fd2ca74822`](https://github.com/XTLS/Xray-core/commit/fd2ca74822)). Переименований XHTTP `extra`/`xmux`/session-placement в диапазоне нет; `streamSettings.method` и `network` сосуществуют.
 
-### Unreleased main (после v26.9.9, не входит в теги)
+### v26.9.30
 
-Для планирования, не для production: XDRIVE transport ([PR #5645](https://github.com/XTLS/Xray-core/pull/5645), [PR #6748](https://github.com/XTLS/Xray-core/pull/6748)); MASQUE outbound/transport ([PR #6807](https://github.com/XTLS/Xray-core/pull/6807)); WireGuard: удаление `remoteDNS` local mode и `domainStrategy` ([commit `efc9e6da62`](https://github.com/XTLS/Xray-core/commit/efc9e6da62)); FakeDNS default `FakeIPv6Pool` → `2001:2::/48` ([commit `3519dfecbd`](https://github.com/XTLS/Xray-core/commit/3519dfecbd)); Transport refactor на Finalmask ([PR #6754](https://github.com/XTLS/Xray-core/pull/6754)).
+- XDNS finalmask переведён в объектную форму ([PR #6718](https://github.com/XTLS/Xray-core/pull/6718)); в v26.10.10 поля переименованы в `names`/`addrs` (см. ниже).
+- WireGuard outbound: удалены `settings.domainStrategy` и режим `remoteDNS: "local"`; переносить в `sockopt.domainStrategy` / `targetStrategy`. Старый режим паникует ядро на старте, старый ключ молча игнорируется ([PR #6771](https://github.com/XTLS/Xray-core/pull/6771)).
+- TUN: `autoSystemDNS` → `autoSystemDnsToGateway`; добавлен `autoSystemWfpBlockLeak` (Windows) ([PR #6853](https://github.com/XTLS/Xray-core/pull/6853)).
+- Transport refactor на dialer/listener из Finalmask ([PR #6754](https://github.com/XTLS/Xray-core/pull/6754)): конфиг без масок эквивалентен прежнему; UDS-listen с `port: 0` сохранён.
+- XTLS Vision: suppress outer `CloseNotify` после перехода в direct copy ([PR #6834](https://github.com/XTLS/Xray-core/pull/6834)). Актуально при собственном TLS/REALITY; за внешним TLS или plaintext UDS — no-op.
+
+### v26.10.10 (снят upstream)
+
+- TLS client перешёл на встроенные Mozilla RootCAs вместо OS store; добавлен `tlsSettings.useSystemCA` (default `false`) ([PR #7105](https://github.com/XTLS/Xray-core/pull/7105)). Outbound к серверу с приватно установленным CA требует явного `useSystemCA: true`.
+- XDNS finalmask: поля переименованы в `names: []string` и `addrs: []string` ([PR #7090](https://github.com/XTLS/Xray-core/pull/7090)); старые ключи молча игнорируются, клиенту нужен core ≥ 26.10.10.
+- Lua-скрипты DNS и routing: `dns.script`, `dns.servers[].id`, `routing.script` ([PR #6823](https://github.com/XTLS/Xray-core/pull/6823)) — аддитивно.
+- MASQUE WARP: `masqueSettings.warp{...}` ([PR #6878](https://github.com/XTLS/Xray-core/pull/6878)) — опционально.
+- XHTTP, VLESS, REALITY, XTLS-Vision и `vlessenc` в диапазоне 26.9.30→26.10.10 не менялись.
+- **Снят 2026-10-21**: не пиновать для пересборок и не считать стабильным источником бинарника.
+
+### v26.10.17 (снят upstream)
+
+- Серия фиксов XDRIVE/Lua/TUN и совместимость XTLS Vision с Go 1.27.3+; тег и ассеты удалены upstream.
+
+### v26.10.21
+
+- Interim security release, помечен `latest`: из встроенного RootCAs удалены 3 корневых сертификата ([#7212](https://github.com/XTLS/Xray-core/pull/7212), компрометация приватных ключей intermediate CA), сборка Go 1.27.3.
+- XTLS Vision: исправлен SIGSEGV на Go 1.27.3+ ([PR #7176](https://github.com/XTLS/Xray-core/pull/7176)). Не пересобирать `v26.10.10`/`v26.10.17` тулчейном ≥ 1.27.3.
+- Полные release notes обещаны позже; трактовать как interim.
 
 ## Проверка обновления
 
 1. Получить `xray version` на сервере и версии core в реальных клиентах.
-2. Сравнить installed tag с target tag по официальному GitHub compare/release history.
+2. Сравнить installed tag с target tag по официальному GitHub compare/release history; не пинить снятые теги.
 3. Проверить REALITY: `minClientVer` (снятый default), поддержку X25519MLKEM768 у клиентов, `serverNames`/shortIds; TLS fields и public chained outbounds.
 4. Проверить XHTTP: `sessionID*`, XMUX/padding defaults (6→3), `trustedXForwardedFor`, отсутствие переименований `extra`.
-5. Проверить finalmask-конфиги: XMC `profiles`, `quicParams.udpHop` → маска `udphop`.
-6. Запустить `xray run -test -config <config-path>` на target binary до restart.
-7. Проверить один реальный клиент из внешней сети, затем выполнить постепенный rollout.
-8. Сохранить старый binary/image и config backup до подтверждения всех критичных клиентских путей.
+5. Проверить finalmask-конфиги: XMC `profiles`, `quicParams.udpHop` → маска `udphop`, XDNS `names`/`addrs`.
+6. TLS outbound: учесть bundled RootCAs (с 26.10.10) и `useSystemCA` для приватных CA.
+7. Запустить `xray run -test -config <config-path>` на target binary до restart.
+8. Проверить один реальный клиент из внешней сети, затем выполнить постепенный rollout.
+9. Сохранить старый binary/image и config backup до подтверждения всех критичных клиентских путей.

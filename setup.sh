@@ -821,7 +821,7 @@ echo ""
 
 echo -e "${G}[1/9]${N} Preparing directories..."
 mkdir -p "$SERVER_DIR/3x-ui/db"
-# Mirror upstream 3x-ui v3.8.5 owner-only storage: 0700 dir / 0600 files
+# Mirror upstream 3x-ui v3.10.2 owner-only storage: 0700 dir / 0600 files
 chmod 700 "$SERVER_DIR/3x-ui/db"
 for f in "$XUI_DB_DIR/x-ui.db" "$XUI_DB_DIR/x-ui.db-wal" "$XUI_DB_DIR/x-ui.db-shm"; do
     if [ -e "$f" ]; then chmod 600 "$f"; fi

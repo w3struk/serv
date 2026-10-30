@@ -38,7 +38,7 @@ cd /opt/serv
 - Зарегистрированный и делегированный домен, например `mydomain.com`, который указывает на ваш VPS.
 - VPS с root-доступом.
 - Docker и Docker Compose.
-- Серверная часть рассчитана на **3x-ui v3.8.5** (закреплённый образ) и **Xray-core v26.9.9** (с поддержкой `vlessenc`).
+- Серверная часть рассчитана на **3x-ui v3.10.2** (закреплённый образ) и **Xray-core v26.10.10** (с поддержкой `vlessenc`).
 - Клиент должен быть совместим с **Xray-core v26.6.22** и поддерживать:
   - **VLESS Encryption**;
   - **XHTTP**;
@@ -275,7 +275,7 @@ watch -n 1 'ss -Htn state established | wc -l' # количество актив
 | `uplinkDataKey` | Клиент | packet-up | Uplink Data Key | нет | Имя ключа данных, если placement ≠ body |
 | `uplinkChunkSize` | Клиент | packet-up | Uplink Chunk Size | нет | Размер чанка при размещении в header/cookie |
 | `noGRPCHeader` | Клиент | stream-up, stream-one | No gRPC Header | нет | Подавляет маскировку под gRPC |
-| `xmux` | Клиент | packet-up, stream-up | XMUX (toggle) | да: `maxConcurrency=0`; `maxConnections="6"`; `cMaxReuseTimes=0`; `hMaxRequestTimes="600-900"`; `hMaxReusableSecs="1800-3000"`; `hKeepAlivePeriod=0` | Мультиплексирование H2/H3. Профиль Xray-core v26.6.27 default anti-RKN: `maxConcurrency: 0` — не включает лимит одновременных запросов на соединение; `maxConnections: "6"` — лимит соединений XMUX; `cMaxReuseTimes: 0` — не задаёт клиентский лимит переиспользований соединения; `hMaxRequestTimes: "600-900"` — диапазон максимального числа HTTP-запросов на соединение; `hMaxReusableSecs: "1800-3000"` — диапазон максимального времени жизни соединения в секундах; `hKeepAlivePeriod: 0` — явное нулевое значение периода keepalive. |
+| `xmux` | Клиент | packet-up, stream-up | XMUX (toggle) | да: `maxConcurrency=0`; `maxConnections="6"`; `cMaxReuseTimes=0`; `hMaxRequestTimes="600-900"`; `hMaxReusableSecs="1800-3000"`; `hKeepAlivePeriod=0` | Мультиплексирование H2/H3. Профиль Xray-core v26.6.27 default anti-RKN: `maxConcurrency: 0` — не включает лимит одновременных запросов на соединение; `maxConnections: "6"` — лимит соединений XMUX; `cMaxReuseTimes: 0` — не задаёт клиентский лимит переиспользований соединения; `hMaxRequestTimes: "600-900"` — диапазон максимального числа HTTP-запросов на соединение; `hMaxReusableSecs: "1800-3000"` — диапазон максимального времени жизни соединения в секундах; `hKeepAlivePeriod: 0` — явное нулевое значение периода keepalive. С v26.7.28 upstream default `maxConnections` изменён на `3`. |
 | `downloadSettings` | Клиент | stream-up | — (не в UI) | нет | Разделение upstream/downstream |
 | `headers` | Клиент | Все | Headers | частично: `User-Agent=chrome`; остальное — нет | Произвольные заголовки запроса |
 

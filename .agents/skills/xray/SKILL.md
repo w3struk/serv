@@ -17,6 +17,7 @@ description: Развертывать, обновлять и администр�
 - Минимизировать поверхность атаки: привязывать транспорты за локальным reverse proxy к `127.0.0.1`, ограничивать management API localhost и блокировать private/reserved destinations, если доступ к LAN явно не требуется.
 - Не открывать Xray management API на публичном интерфейсе.
 - Не генерировать `allowInsecure`: в современных версиях Xray-core поле удалено. Исправлять certificate chain, SNI и проверку имени; применять `pinnedPeerCertSha256` только при осознанном pinning и вместе с корректным `serverName`, `verifyPeerCertByName` или адресом outbound.
+- Для outbound TLS учитывать: с Xray-core v26.10.10 клиент проверяет сертификаты по встроенным Mozilla RootCAs, а не по OS store; для сервера с приватно установленным CA включать `tlsSettings.useSystemCA: true`.
 - Не предлагать plaintext HTTP для панелей управления. Размещать 3x-ui/x-ui и другие панели за HTTPS, localhost, SSH tunnel, VPN или доверенным reverse proxy.
 - Проверять соответствие развертывания требованиям закона, провайдера и организации пользователя.
 
@@ -28,7 +29,7 @@ description: Развертывать, обновлять и администр�
 - Сверить установленный и целевой теги с официальными [Xray-core Releases](https://github.com/XTLS/Xray-core/releases). Отличать `Latest` stable от `Pre-release`; не считать самый новый тег автоматически подходящим для production.
 - В production фиксировать точный тег или image digest и сохранять проверенный rollback artifact. Не переключать развертывание на изменяемые `latest` или `pre-release` без прямого решения пользователя.
 - Читать [матрицу совместимости версий](references/version-compatibility.md), если задача касается обновления, REALITY, XHTTP `extra`/XMUX/padding/session placement, TLS pinning, legacy ciphers или старых клиентов.
-- Считать матрицу датированным снимком (обновлена 2026-09-26, покрытие до v26.9.9). При запросе о последних изменениях повторно проверять upstream release, относящиеся PR/commits и диапазон изменений от установленного тега до целевого.
+- Считать матрицу датированным снимком (обновлена 2026-10-25, покрытие до v26.10.21; v26.10.10 и v26.10.17 сняты upstream). При запросе о последних изменениях повторно проверять upstream release, относящиеся PR/commits и диапазон изменений от установленного тега до целевого.
 - Сравнивать совместимость сервера со всеми реальными клиентами и панелями, затем сначала проверять обновление на одном клиенте или тестовом inbound.
 
 ## Источники upstream
@@ -271,6 +272,7 @@ journalctl -u xray --no-pager -n 100
 
 - Connection timeout: проверить DNS, firewall, provider security groups, listening ports и reverse proxy upstreams.
 - TLS handshake failure: проверить SNI, certificate, ALPN, reverse proxy mode и client fingerprint settings.
+- Outbound TLS перестал доверять приватному CA после обновления core: включить `useSystemCA` (bundled RootCAs появились в v26.10.10).
 - Certificate/import warnings: исправить certificate chain, SNI, client fingerprint или HTTPS panel setup; не включать insecure verification.
 - Reality failure: проверить public/private key pair, `serverNames`, `shortIds`, client `pbk`, `sid`, `sni`, time synchronization и `minClientVer` относительно версии клиента.
 - REALITY handshake перестал проходить после обновления core: проверить поддержку X25519MLKEM768 в клиентах и фактический `minClientVer` (в v26.9.x встроенный default снят).
