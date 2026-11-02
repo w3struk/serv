@@ -821,7 +821,7 @@ echo ""
 
 echo -e "${G}[1/9]${N} Preparing directories..."
 mkdir -p "$SERVER_DIR/3x-ui/db"
-# Mirror upstream 3x-ui v3.10.2 owner-only storage: 0700 dir / 0600 files
+# Mirror upstream 3x-ui v3.11.0 owner-only storage: 0700 dir / 0600 files
 chmod 700 "$SERVER_DIR/3x-ui/db"
 for f in "$XUI_DB_DIR/x-ui.db" "$XUI_DB_DIR/x-ui.db-wal" "$XUI_DB_DIR/x-ui.db-shm"; do
     if [ -e "$f" ]; then chmod 600 "$f"; fi
@@ -864,6 +864,20 @@ BCRYPT_HASH=$(docker run --rm -i caddy caddy hash-password <<< "$WEB_PASSWORD" 2
 }
 sed -i "s|\$WEB_PASSWORD_HASH|$BCRYPT_HASH|g" "$SERVER_DIR/Caddyfile"
 echo -e "  ${G}Caddy bcrypt hash updated${N}"
+
+# Validate the rendered config before anything starts, so a broken Caddyfile
+# cannot pass the installer silently and leave Caddy crash-looping.
+CADDY_IMAGE=$(tr -d '\r' < "$SERVER_DIR/docker-compose.yml" | awk '$1 == "image:" && $2 ~ /^caddy:/ { print $2; exit }')
+if [ -z "$CADDY_IMAGE" ]; then
+    echo -e "${R}[ERROR]${N} Could not read the pinned caddy image from docker-compose.yml"
+    exit 1
+fi
+CADDY_VALIDATE_OUT=$(docker run --rm -v "$SERVER_DIR/Caddyfile:/etc/caddy/Caddyfile:ro" "$CADDY_IMAGE" caddy validate --config /etc/caddy/Caddyfile 2>&1) || {
+    echo -e "${R}[ERROR]${N} Caddyfile validation failed:"
+    echo "$CADDY_VALIDATE_OUT" | sed 's/^/    /'
+    exit 1
+}
+echo -e "  ${G}Caddyfile is valid${N}"
 
 echo -e "${G}[5/9]${N} Configuring firewall..."
 # On RHEL-family, firewalld and iptables-services conflict at runtime and
@@ -996,11 +1010,37 @@ if [ -z "$CSRF_TOKEN" ]; then
     exit 1
 fi
 
-echo "  Logging in with default credentials (admin/admin)..."
-if ! xui_login "admin" "admin"; then
-    echo -e "${R}[ERROR]${N} 3x-ui login failed. Check if the panel is running with default credentials (admin/admin)."
-    rm "$COOKIE_FILE"
-    exit 1
+echo "  Logging in to the 3x-ui panel..."
+XUI_CURRENT_USER=""
+XUI_CURRENT_PASS=""
+if xui_login "admin" "admin"; then
+    # Images up to v3.10.2 still seed the default account.
+    XUI_CURRENT_USER="admin"
+    XUI_CURRENT_PASS="admin"
+else
+    # 3x-ui v3.11.0+ no longer seeds admin/admin: the panel creates a random
+    # first user and prints it once, so the seeded credentials are unknown.
+    # Try the requested ones first (no mutation), then set them through the
+    # panel CLI, which creates or updates the first panel user.
+    echo "  Panel has no default account (3x-ui v3.11.0+) — checking the requested credentials..."
+    CLI_OUT=""
+    CLI_TRIES=0
+    until xui_login "$XUI_USER" "$XUI_PASS"; do
+        CLI_TRIES=$((CLI_TRIES + 1))
+        if [ "$CLI_TRIES" -ge 3 ]; then
+            echo -e "${R}[ERROR]${N} Could not set the panel credentials inside the container: ${CLI_OUT:-no output}"
+            echo -e "${Y}Hint:${N} run 'docker exec 3xui_app /app/x-ui setting -username <user> -password <pass>' manually, then re-run."
+            rm "$COOKIE_FILE"
+            exit 1
+        fi
+        # The CLI prints failures on stdout and still exits 0, so the login
+        # attempt below is the real check. The panel may hold the SQLite write
+        # lock, hence the retries.
+        CLI_OUT=$(docker exec 3xui_app /app/x-ui setting -username "$XUI_USER" -password "$XUI_PASS" 2>&1) || true
+        sleep 2
+    done
+    XUI_CURRENT_USER="$XUI_USER"
+    XUI_CURRENT_PASS="$XUI_PASS"
 fi
 
 echo "  Checking Hosts API compatibility..."
@@ -1153,13 +1193,15 @@ else
     echo -e "${Y}Warning:${N} Failed to configure panel settings ($MSG)"
 fi
 
-# 5. Update 3x-ui credentials to user-provided values (if different from defaults)
-if [ "$XUI_USER" != "admin" ] || [ "$XUI_PASS" != "admin" ]; then
+# 5. Update 3x-ui credentials to user-provided values (if they differ from the current ones)
+if [ "$XUI_CURRENT_USER" != "$XUI_USER" ] || [ "$XUI_CURRENT_PASS" != "$XUI_PASS" ]; then
     echo "  Updating 3x-ui credentials..."
     CRED_PAYLOAD=$(jq -nc \
+        --arg old_username "$XUI_CURRENT_USER" \
+        --arg old_password "$XUI_CURRENT_PASS" \
         --arg new_username "$XUI_USER" \
         --arg new_password "$XUI_PASS" \
-        '{oldUsername:"admin",oldPassword:"admin",newUsername:$new_username,newPassword:$new_password}')
+        '{oldUsername:$old_username,oldPassword:$old_password,newUsername:$new_username,newPassword:$new_password}')
     CRED_RESP=$(xui_json "http://127.0.0.1:2053/panel/api/setting/updateUser" "$CRED_PAYLOAD")
     if echo "$CRED_RESP" | jq_success; then
         echo -e "  ${G}Credentials updated${N}"

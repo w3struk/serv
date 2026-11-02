@@ -6,6 +6,13 @@
     }
 }
 
+# The panel derives the client address from X-Forwarded-For and no longer
+# trusts a client-supplied X-Real-IP (3x-ui v3.11.0+). Strip it so a spoofed
+# header cannot turn the login limiter into the proxy address.
+(strip_real_ip) {
+    header_up -X-Real-IP
+}
+
 http://:80 {
     bind 0.0.0.0
     redir https://$DOMAIN{uri} permanent
@@ -15,19 +22,25 @@ $DOMAIN {
     encode gzip zstd
 
     handle /$ADMIN_PATH/panel/api/* {
-        reverse_proxy 127.0.0.1:2053
+        reverse_proxy 127.0.0.1:2053 {
+            import strip_real_ip
+        }
     }
 
     handle /$ADMIN_PATH/* {
         basic_auth {
             admin $WEB_PASSWORD_HASH
         }
-        reverse_proxy 127.0.0.1:2053
+        reverse_proxy 127.0.0.1:2053 {
+            import strip_real_ip
+        }
     }
 
     handle /assets/* {
         rewrite * /$ADMIN_PATH{path}
-        reverse_proxy 127.0.0.1:2053
+        reverse_proxy 127.0.0.1:2053 {
+            import strip_real_ip
+        }
     }
 
     handle /$SUB_PATH/* {

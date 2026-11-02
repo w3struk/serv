@@ -10,8 +10,8 @@ services:
             - ./Caddyfile:/etc/caddy/Caddyfile
 
     3xui:
-        # pinned 2026-10-25: 3x-ui v3.10.2 (matches external/3x-ui submodule), digest from ghcr API.
-        image: ghcr.io/mhsanaei/3x-ui:v3.10.2@sha256:6c7e73c5bc4b6d7d70866616f78d6c9866b4904defad3077c1e2b5c1c89c2ec1
+        # pinned 2026-11-02: 3x-ui v3.11.0 (matches external/3x-ui submodule), digest from ghcr API.
+        image: ghcr.io/mhsanaei/3x-ui:v3.11.0@sha256:1628adbd9bed680d25d6f714bef4a20f132105f4612ea294952f6665dad32e5b
         container_name: 3xui_app
         restart: unless-stopped
         network_mode: host
